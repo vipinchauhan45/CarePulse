@@ -10,7 +10,6 @@ export interface IPatient extends Document {
   previouslyAssignedNurses: Types.ObjectId[];
   medicalHistory: string[];
   createdBy: Types.ObjectId; 
-  machineKey:string;
 }
 
 const patientSchema = new Schema<IPatient>(
@@ -24,9 +23,8 @@ const patientSchema = new Schema<IPatient>(
     previouslyAssignedNurses: [{ type: Schema.Types.ObjectId, ref: "User" }],
     medicalHistory: [{ type: String }],
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    machineKey: {type: String, required: true, unique: true}
   },
   { timestamps: true }
 );
 
-export const Patient = model<IPatient>("Patient", patientSchema);
+export const DisPatient = model<IPatient>("DisPatient", patientSchema);

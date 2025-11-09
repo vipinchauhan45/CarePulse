@@ -4,15 +4,15 @@ export interface IVitalSigns extends Document {
   patient: Types.ObjectId;
   heartRate: number;
   respiratoryRate: number;
-  bloodPressure: string;                // e.g., "120/80"
-  meanArterialPressure: number;         // MAP
-  oxygenSaturation: number;             // SpO2
-  temperature: number;                  // °C
-  ecgWaveform: string;                  // could be base64, file path, or raw data
-  endTidalCO2: number;                  // EtCO2
-  fiO2: number;                         // Fraction of inspired oxygen
-  tidalVolume: number;                  // mL
-  centralVenousPressure: number;        // CVP
+  bloodPressure: string;              
+  meanArterialPressure: number;        
+  oxygenSaturation: number;            
+  temperature: number;                   
+  ecgWaveform: string;                  
+  endTidalCO2: number;                  
+  fiO2: number;                         
+  tidalVolume: number;                  
+  centralVenousPressure: number;        
   recordedAt: Date;
 }
 
