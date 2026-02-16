@@ -7,7 +7,7 @@ import { initializeWebSocket } from "./websocket/socket.js";
 dotenv.config();
 
 const MONGODB_URI: string = process.env.MONGODB_URI || "";
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 8090;
 
 const server = http.createServer(app);
 

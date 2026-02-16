@@ -2,7 +2,7 @@ import WebSocket, { WebSocketServer } from "ws";
 import { RoomManager } from "./roomManager.js";
 
 export function initializeWebSocket() {
-  const PORT = 8080; // separate port for websocket
+  const PORT = 8060; // separate port for websocket
   const wss = new WebSocketServer({ port: PORT });
   const roomManager = new RoomManager();
 
