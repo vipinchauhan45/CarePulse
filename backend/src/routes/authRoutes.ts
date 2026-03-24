@@ -10,52 +10,6 @@ const userRouter = express.Router();
 
 type UserInput = z.infer<typeof signupSchema>;
 
-// userRouter.post("/register", async (req: Request, res: Response) => {
-//   const { success } = signupSchema.safeParse(req.body);
-//   const userInfo: UserInput = req.body;
-//   if (!success) {
-//     return res.status(400).json({
-//       msg: "validation failed",
-//     });
-//   }
-
-//   try {
-//     const existingUser = await User.findOne({ email: userInfo.email });
-//     if (existingUser) {
-//       return res.status(400).json({
-//         msg: "userAlready exists",
-//       });
-//     }
-
-//     const hashPassword: string = await bcrypt.hash(
-//       userInfo.password,
-//       Number(process.env.NUM)
-//     );
-
-//     const user = await User.create({
-//       name: userInfo.name,
-//       password: hashPassword,
-//       email: userInfo.email,
-//       role: userInfo.role,
-//     });
-
-//     const token = jwt.sign(
-//       { email: user.email, _id: user._id, role: user.role },
-//       process.env.JWT_SECRET as string
-//     );
-
-//     return res.status(201).json({
-//       msg: "user created successfully",
-//       token: token,
-//     });
-//   } catch (e: any) {
-//     return res.status(500).json({
-//       msg: "server error",
-//       error: e.message,
-//     });
-//   }
-// });
-
 type loginData = Pick<UserInput, "email" | "password">;
 
 userRouter.post("/login", async (req: Request, res: Response) => {

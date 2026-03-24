@@ -1,14 +1,23 @@
+import { AlertModel } from "../models/Alert.js";
+
 import WebSocket from "ws";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
-import { Patient } from "../models/Patient.js";
 import { VitalSigns } from "../models/VitalSigns.js";
-import { triggerAlertIfAbnormal } from "./alertUtils.js";
+import { Patient } from "../models/Patient.js";
+
 import type {
   WebSocketPayload,
   MachineMessagePayload,
   VitalData,
+  AlertPayload,
+  RecoveryPayload,
 } from "./payload.interface.js";
+
+import { getAlertTypes, getSeverity } from "./alertRules.js";
+import { CooldownTracker } from "./cooldown.js";
+import { AssignmentCache } from "./assignmentCache.js";
+import { sendAlertEmail } from "./sendAlertEmail.js";
 
 dotenv.config();
 
@@ -21,346 +30,541 @@ interface DecodedToken {
 interface Room {
   machineSocket?: WebSocket;
   staffSockets: Set<WebSocket>;
+  patientId?: string;
 }
 
 export class RoomManager {
   private rooms: Map<string, Room> = new Map();
-  private vitalsBuffer: Map<string, VitalData[]> = new Map();
   private socketUserMap: Map<WebSocket, DecodedToken> = new Map();
-  private staffSocketsByUserId: Map<string, Set<WebSocket>> = new Map();
-private lastAlertAt: Map<string, number> = new Map();
-private ALERT_COOLDOWN_MS = 30_000;
 
+  private socketsByUserId: Map<string, Set<WebSocket>> = new Map();
+  private userIdBySocket: Map<WebSocket, string> = new Map();
+
+  private vitalsBuffer: Map<string, VitalData[]> = new Map();
+  private patientState: Map<string, "normal" | "abnormal"> = new Map();
+
+  private uiCooldown = new CooldownTracker(60_000);
+  private emailCooldown = new CooldownTracker(15 * 60_000);
+
+  private assignmentCache = new AssignmentCache(120_000);
 
   constructor() {
-    // Save buffered vitals every 5 minutes
+    console.log("[WS] RoomManager initialized. Buffer save interval: 5 min");
     setInterval(() => this.saveBufferedVitals(), 5 * 60 * 1000);
   }
 
   public handleConnection(ws: WebSocket) {
+    console.log("[WS] client connected");
+
     ws.on("message", async (data) => {
       try {
         const msg: WebSocketPayload = JSON.parse(data.toString());
 
-        switch (msg.type) {
-          case "connect":
-            await this.handleInitialConnect(ws, msg);
-            break;
+        if (msg.type === "connect") {
+          await this.handleConnect(ws, msg);
+          return;
+        }
 
-          case "join":
-            await this.handleJoin(ws, msg);
-            break;
+        if (msg.type === "join") {
+          await this.handleJoin(ws, msg);
+          return;
+        }
 
-          case "disconnect":
-            this.handleDisconnect(ws, msg);
-            break;
+        if (msg.type === "leave") {
+          this.handleLeave(ws, msg);
+          return;
+        }
 
-          case "message":
-            await this.handleMessage(msg);
-            break;
+        if (msg.type === "message") {
+          await this.handleMachineMessage(ws, msg);
+          return;
+        }
 
-          default:
-            ws.send(JSON.stringify({ error: "Invalid message type" }));
+        console.log("[WS] invalid message type:", (msg as any).type);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ error: "Invalid message type" }));
         }
       } catch (err) {
-        console.error("Error handling message:", err);
-        ws.send(JSON.stringify({ error: "Invalid message format" }));
+        console.error("[WS] invalid message format:", err);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ error: "Invalid message format" }));
+        }
       }
     });
 
-    ws.on("close", () => this.removeSocket(ws));
+    ws.on("close", () => {
+      console.log("[WS] client disconnected");
+      this.cleanupSocket(ws);
+    });
   }
 
-  // Step 1: First-time connection (doctor/nurse: token | machine: no token)
-  private async handleInitialConnect(ws: WebSocket, msg: WebSocketPayload) {
-    if (msg.type !== "connect") return;
+  private addPresence(userId: string, ws: WebSocket) {
+    if (!this.socketsByUserId.has(userId)) {
+      this.socketsByUserId.set(userId, new Set());
+    }
+    this.socketsByUserId.get(userId)!.add(ws);
+    this.userIdBySocket.set(ws, userId);
 
+    console.log("[PRESENCE] add:", userId, "sockets:", this.socketsByUserId.get(userId)!.size);
+  }
+
+  private removePresence(ws: WebSocket) {
+    const userId = this.userIdBySocket.get(ws);
+    if (!userId) return;
+
+    const set = this.socketsByUserId.get(userId);
+    if (set) {
+      set.delete(ws);
+      if (set.size === 0) this.socketsByUserId.delete(userId);
+    }
+
+    this.userIdBySocket.delete(ws);
+
+    console.log("[PRESENCE] remove:", userId, "remaining:", this.socketsByUserId.get(userId)?.size ?? 0);
+  }
+
+  private async handleConnect(ws: WebSocket, msg: WebSocketPayload) {
     if (msg.isMachine === "true") {
       this.socketUserMap.set(ws, { _id: "", email: "", role: "machine" });
-      ws.send(JSON.stringify({ status: "Machine connected (waiting for join)" }));
-      console.log(" Machine connected (awaiting join)");
-    } else {
-      const token = "token" in msg ? msg.token : undefined;
-      if (!token) {
-        ws.send(JSON.stringify({ error: "Token required for staff" }));
+      console.log("[CONNECT] machine connected (awaiting join)");
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ status: "Machine connected. Send join next." }));
+      }
+      return;
+    }
+
+    const token = "token" in msg ? msg.token : undefined;
+    if (!token) {
+      console.log("[CONNECT] staff missing token");
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ error: "Token required" }));
+      }
+      return;
+    }
+
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as DecodedToken;
+
+      if (decoded.role !== "doctor" && decoded.role !== "nurse") {
+        console.log("[CONNECT] invalid role:", decoded.role);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ error: "Invalid role" }));
+        }
         return;
       }
 
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as DecodedToken;
-        this.socketUserMap.set(ws, decoded);
-        ws.send(JSON.stringify({ status: `${decoded.role} connected successfully` }));
-        console.log(` ${decoded.role} connected and verified`);
-      } catch {
+      this.socketUserMap.set(ws, decoded);
+      this.addPresence(decoded._id, ws);
+
+      console.log("[CONNECT] staff connected:", decoded.role, decoded._id);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ status: `${decoded.role} connected` }));
+      }
+    } catch (err) {
+      console.error("[CONNECT] token verify failed:", err);
+      if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ error: "Invalid or expired token" }));
       }
     }
   }
 
-//   private async handleInitialConnect(ws: WebSocket, msg: WebSocketPayload) {
-//   if (msg.type !== "connect") return;
-
-//   if (msg.isMachine === "true") {
-//     this.socketUserMap.set(ws, { _id: "", email: "", role: "machine" });
-//     ws.send(JSON.stringify({ status: "Machine connected (waiting for join)" }));
-//     console.log("Machine connected (awaiting join)");
-//     return;
-//   }
-
-//   const token = "token" in msg ? msg.token : undefined;
-//   if (!token) {
-//     ws.send(JSON.stringify({ error: "Token required for staff" }));
-//     return;
-//   }
-
-//   try {
-//     const decoded = jwt.verify(
-//       token,
-//       process.env.JWT_SECRET as string
-//     ) as DecodedToken;
-
-//     if (decoded.role !== "doctor" && decoded.role !== "nurse") {
-//       ws.send(JSON.stringify({ error: "Unauthorized role" }));
-//       return;
-//     }
-
-//     this.socketUserMap.set(ws, decoded);
-
-//     if (!this.staffSocketsByUserId.has(decoded._id)) {
-//       this.staffSocketsByUserId.set(decoded._id, new Set());
-//     }
-//     this.staffSocketsByUserId.get(decoded._id)!.add(ws);
-
-//     ws.send(JSON.stringify({ status: `${decoded.role} connected successfully` }));
-//     console.log(`${decoded.role} connected and registered for alerts`);
-//   } catch {
-//     ws.send(JSON.stringify({ error: "Invalid or expired token" }));
-//   }
-// }
-
-
-  // Step 2: When client (machine or staff) joins a patient room
   private async handleJoin(ws: WebSocket, msg: WebSocketPayload) {
-    if (msg.type !== "join") {
-      ws.send(JSON.stringify({ error: "Invalid message type for join" }));
-      return;
-    }
+    if (msg.type !== "join") return;
 
     const { machineKey, patientId, isMachine } = msg;
 
     if (!machineKey || !patientId) {
-      ws.send(JSON.stringify({ error: "machineKey and patientId required" }));
+      console.log("[JOIN] missing machineKey/patientId");
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ error: "machineKey and patientId required" }));
+      }
       return;
     }
 
     if (isMachine === "true") {
       const patient = await Patient.findById(patientId).exec();
       if (!patient || patient.machineKey !== machineKey) {
-        ws.send(JSON.stringify({ error: "Invalid machineKey or patientId" }));
+        console.log("[JOIN] machine invalid machineKey/patientId:", machineKey, patientId);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ error: "Invalid machineKey/patientId" }));
+        }
         return;
       }
 
-      if (!this.rooms.has(machineKey)) {
-        this.rooms.set(machineKey, { staffSockets: new Set() });
-      }
-
+      if (!this.rooms.has(machineKey)) this.rooms.set(machineKey, { staffSockets: new Set() });
       const room = this.rooms.get(machineKey)!;
       room.machineSocket = ws;
+      room.patientId = patientId;
 
-      console.log(` Machine joined room for patient ${patient.name}`);
-      ws.send(JSON.stringify({ status: "Machine linked to patient" }));
-    } else {
-      const decoded = this.socketUserMap.get(ws);
-      if (!decoded) {
-        ws.send(JSON.stringify({ error: "Unauthorized. Please reconnect with token." }));
-        return;
+      console.log("[JOIN] machine joined:", machineKey, "patient:", patientId);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ status: "Machine joined patient room" }));
       }
+      return;
+    }
 
-      const patient = await Patient.findById(patientId).exec();
-      if (!patient) {
+    const decoded = this.socketUserMap.get(ws);
+    if (!decoded) {
+      console.log("[JOIN] staff tried without connect/token");
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ error: "Unauthorized. Connect with token first." }));
+      }
+      return;
+    }
+
+    const patient = await Patient.findById(patientId).exec();
+    if (!patient) {
+      console.log("[JOIN] invalid patientId:", patientId);
+      if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ error: "Invalid patientId" }));
-        return;
       }
+      return;
+    }
 
-      const isAuthorized =
-        (decoded.role === "doctor" &&
-          patient.assignedDoctors.some((id) => id.toString() === decoded._id)) ||
-        (decoded.role === "nurse" &&
-          patient.assignedNurses.some((id) => id.toString() === decoded._id));
+    const isAuthorized =
+      (decoded.role === "doctor" &&
+        patient.assignedDoctors.some((id) => id.toString() === decoded._id)) ||
+      (decoded.role === "nurse" &&
+        patient.assignedNurses.some((id) => id.toString() === decoded._id));
 
-      if (!isAuthorized) {
+    if (!isAuthorized) {
+      console.log("[JOIN] not authorized:", decoded._id, "patient:", patientId);
+      if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ error: "Not authorized for this patient" }));
-        return;
       }
-
-      if (!this.rooms.has(machineKey)) {
-        this.rooms.set(machineKey, { staffSockets: new Set() });
-      }
-
-      const room = this.rooms.get(machineKey)!;
-      room.staffSockets.add(ws);
-
-      console.log(` ${decoded.role} joined room for patient ${patient.name}`);
-      ws.send(JSON.stringify({ status: `${decoded.role} joined patient room` }));
+      return;
     }
+
+    if (!this.rooms.has(machineKey)) this.rooms.set(machineKey, { staffSockets: new Set() });
+    const room = this.rooms.get(machineKey)!;
+    room.staffSockets.add(ws);
+    room.patientId = patientId;
+
+    console.log("[JOIN] staff joined room:", decoded._id, "machineKey:", machineKey, "patient:", patientId);
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ status: "Joined room" }));
+    }
+    await this.sendActiveAlertsOnJoin(ws, patientId);
   }
 
-  // Step 3: Handle disconnect
-  private handleDisconnect(ws: WebSocket, msg: WebSocketPayload) {
-    if (msg.type !== "disconnect") return;
-
-    const isMachine = msg.isMachine;
-    const machineKey = "machineKey" in msg ? msg.machineKey : undefined;
-
-    if (isMachine === "true" && machineKey) {
-      const room = this.rooms.get(machineKey);
-      if (room) {
-        delete room.machineSocket;
-        console.log(` Machine disconnected from ${machineKey}`);
-      }
-    }
-    this.removeSocket(ws);
-  }
-
-  // Step 4: Handle incoming vitals from machine
-  private async handleMessage(msg: WebSocketPayload) {
-    if (msg.type !== "message") return;
-    const { machineKey, patientId, vitals } = msg as MachineMessagePayload;
+  private handleLeave(ws: WebSocket, msg: WebSocketPayload) {
+    if (msg.type !== "leave") return;
+    const { machineKey, patientId } = msg as any;
 
     const room = this.rooms.get(machineKey);
+    if (!room) return;
+
+    room.staffSockets.delete(ws);
+
+    console.log("[LEAVE] staff left room:", machineKey, "patient:", patientId);
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ status: "Left room" }));
+    }
+  }
+
+  private async handleMachineMessage(ws: WebSocket, msg: WebSocketPayload) {
+    if (msg.type !== "message") return;
+
+    const { machineKey, patientId, vitals } = msg as MachineMessagePayload;
+
+    console.log("[VITALS] received:", { machineKey, patientId, hr: vitals.heartRate, spo2: vitals.oxygenSaturation, map: vitals.meanArterialPressure, temp: vitals.temperature });
+
+    const room = this.rooms.get(machineKey);
+    const watchers = room?.staffSockets.size ?? 0;
+    console.log("[VITALS] watchers in room:", watchers);
+
     if (room) {
-      for (const staffSocket of room.staffSockets) {
-        staffSocket.send(JSON.stringify({ type: "vitalUpdate", vitals }));
+      for (const s of room.staffSockets) {
+        if (s.readyState === WebSocket.OPEN) {
+          s.send(JSON.stringify({ type: "vitalUpdate", patientId, vitals }));
+        }
       }
     }
 
-    if (!this.vitalsBuffer.has(patientId)) {
-      this.vitalsBuffer.set(patientId, []);
-    }
+    if (!this.vitalsBuffer.has(patientId)) this.vitalsBuffer.set(patientId, []);
     this.vitalsBuffer.get(patientId)!.push(vitals);
 
-    await triggerAlertIfAbnormal(patientId, vitals);
+    this.handleAlerting(patientId, vitals).catch(err => {
+  console.error("[ALERT ERROR]", err);
+});
   }
 
-  // private async handleMessage(msg: WebSocketPayload) {
-  // if (msg.type !== "message") return;
 
-  // const { machineKey, patientId, vitals } = msg as MachineMessagePayload;
+  private async handleAlerting(patientId: string, vitals: VitalData) {
+    const severity = getSeverity(vitals);
+    const prev = this.patientState.get(patientId) ?? "normal";
+    const next = severity ? "abnormal" : "normal";
 
-  // // 1) Optional: still forward live vitals to staff who joined that machine room
-  // const room = this.rooms.get(machineKey);
-  // if (room) {
-  //   for (const staffSocket of room.staffSockets) {
-  //     staffSocket.send(JSON.stringify({ type: "vitalUpdate", patientId, vitals }));
-  //   }
-  // }
+    console.log("[ALERT] patient:", patientId, "prev:", prev, "next:", next, "severity:", severity);
 
-  // // 2) Buffer vitals for DB batch insert
-  // if (!this.vitalsBuffer.has(patientId)) this.vitalsBuffer.set(patientId, []);
-  // this.vitalsBuffer.get(patientId)!.push(vitals);
+    if (severity && prev === "normal") {
+      this.patientState.set(patientId, "abnormal");
 
-  // // 3) Abnormal check (same thresholds as your triggerAlertIfAbnormal)
-  // const reasons: string[] = [];
-  // if (vitals.heartRate < 60 || vitals.heartRate > 120) reasons.push(`Heart Rate: ${vitals.heartRate}`);
-  // if (vitals.oxygenSaturation < 90) reasons.push(`SpO₂: ${vitals.oxygenSaturation}`);
-  // if (vitals.temperature > 39) reasons.push(`Temperature: ${vitals.temperature}`);
-  // if (vitals.meanArterialPressure < 65) reasons.push(`MAP: ${vitals.meanArterialPressure}`);
+      const alertTypes = getAlertTypes(vitals);
+      console.log("[ALERT] triggered types:", alertTypes);
 
-  // const abnormal = reasons.length > 0;
+      await this.sendAlertToAssigned(patientId, vitals, severity, alertTypes);
+      return;
+    }
 
-  // // 4) If abnormal -> send popup to assigned doctors/nurses (Option B)
-  // if (abnormal) {
-  //   const now = Date.now();
-  //   const last = this.lastAlertAt.get(patientId) ?? 0;
+    if (!severity && prev === "abnormal") {
+      this.patientState.set(patientId, "normal");
+      console.log("[ALERT] recovery triggered");
+      await this.sendRecoveryToAssigned(patientId);
+    }
+  }
 
-  //   // cooldown to prevent popup spam
-  //   if (now - last >= this.ALERT_COOLDOWN_MS) {
-  //     this.lastAlertAt.set(patientId, now);
+  public async sendAlertToAssigned(
+    patientId: string,
+    vitals: VitalData,
+    severity: "high" | "critical",
+    alertTypes: string[]
+  ) {
+    const staff = await this.assignmentCache.get(patientId);
+    if (!staff) {
+      console.log("[ALERT] no staff found in cache/db for patient:", patientId);
+      return;
+    }
 
-  //     const patient = await Patient.findById(patientId)
-  //       .select("name assignedDoctors assignedNurses")
-  //       .lean();
+    console.log("[ASSIGN] patient:", patientId, "staffIds:", staff.staffIds.length, "emails:", staff.emails);
 
-  //     if (patient) {
-  //       const receivers = [
-  //         ...patient.assignedDoctors.map(String),
-  //         ...patient.assignedNurses.map(String),
-  //       ];
+    const uiKeys = alertTypes.map((t) => `ui:${patientId}:${t}`);
+    const emailKeys = alertTypes.map((t) => `email:${patientId}:${t}`);
 
-  //       const alertPayload = {
-  //         type: "alert",
-  //         patientId,
-  //         patientName: patient.name,
-  //         machineKey,
-  //         reasons,
-  //         vitals,
-  //         ts: now,
-  //         severity: "critical",
-  //       };
+    const canSendUI = uiKeys.some((k) => this.uiCooldown.canSend(k));
+    const canSendEmail = emailKeys.some((k) => this.emailCooldown.canSend(k));
 
-  //       for (const userId of receivers) {
-  //         const sockets = this.staffSocketsByUserId.get(userId);
-  //         if (!sockets) continue;
+    console.log("[COOLDOWN] canSendUI:", canSendUI, "keys:", uiKeys);
+    console.log("[COOLDOWN] canSendEmail:", canSendEmail, "keys:", emailKeys);
 
-  //         for (const s of sockets) {
-  //           s.send(JSON.stringify(alertPayload));
-  //         }
+    // const payload: AlertPayload = {
+    //   type: "alert",
+    //   severity,
+    //   patientId,
+    //   patientName: staff.patientName,
+    //   vitals,
+    //   createdAt: new Date().toISOString(),
+    //   alertTypes,
+    // };
+    
+    // ✅ CHECK EXISTING ALERT (ADD HERE)
+const existing = await AlertModel.findOne({
+  patientId,
+  isActive: true,
+  severity,
+  alertTypes: { $in: alertTypes },
+});
+
+if (existing) {
+  console.log("[ALERT] already active, skipping everything");
+  return; // ✅ stop UI + email also
+}
+
+// ✅ create alert (store result)
+const newAlert = await AlertModel.create({
+  patientId,
+  patientName: staff.patientName,
+  severity,
+  vitals,
+  alertTypes,
+  isActive: true,
+  createdAt: new Date(),
+});
+
+// 👇 THEN CONTINUE YOUR EXISTING LOGIC
+
+const payload: AlertPayload = {
+  type: "alert",
+  alertId: newAlert._id.toString(), // ✅ NEW (important for frontend)
+  severity,
+  patientId,
+  patientName: staff.patientName,
+  vitals,
+  createdAt: newAlert.createdAt.toISOString(),
+  alertTypes,
+};
+
+//     await AlertModel.create({
+//   patientId,
+//   patientName: staff.patientName,
+//   severity,
+//   vitals,
+//   alertTypes,
+//   isActive: true,
+//   createdAt: new Date(),
+// });
+
+    if (canSendUI) {
+      let delivered = 0;
+      for (const userId of staff.staffIds) {
+        const sockets = this.socketsByUserId.get(userId);
+        if (!sockets) continue;
+
+        for (const s of sockets) {
+          if (s.readyState === WebSocket.OPEN) {
+            s.send(JSON.stringify(payload));
+            delivered++;
+          }
+        }
+      }
+      console.log("[ALERT] UI delivered sockets:", delivered);
+    } else {
+      console.log("[ALERT] UI skipped due to cooldown");
+    }
+
+    if (canSendEmail) {
+      const message = this.buildEmailMessage(staff.patientName, vitals);
+      const subject = `Abnormal Vitals for ${staff.patientName} (${severity.toUpperCase()})`;
+
+      //  Recommended: send ONE email using BCC to reduce Gmail quota usage
+      const USE_BCC = true;
+
+      if (USE_BCC) {
+        try {
+          await sendAlertEmail(process.env.ALERT_EMAIL_USER as string, subject, message, staff.emails);
+          console.log("[EMAIL] BCC sent to:", staff.emails);
+        } catch (err) {
+          console.error("[EMAIL] BCC failed:", err);
+        }
+      } else {
+        for (const email of staff.emails) {
+          try {
+            await sendAlertEmail(email, subject, message);
+            console.log("[EMAIL] sent to", email);
+          } catch (err) {
+            console.error("[EMAIL] failed for", email, err);
+          }
+        }
+      }
+    } else {
+      console.log("[EMAIL] skipped due to cooldown");
+    }
+  }
+
+  // public async sendRecoveryToAssigned(patientId: string) {
+  //   const staff = await this.assignmentCache.get(patientId);
+  //   if (!staff) return;
+
+  //   const payload: RecoveryPayload = {
+  //     type: "recovery",
+  //     patientId,
+  //     patientName: staff.patientName,
+  //     createdAt: new Date().toISOString(),
+  //   };
+
+  //   let delivered = 0;
+  //   for (const userId of staff.staffIds) {
+  //     const sockets = this.socketsByUserId.get(userId);
+  //     if (!sockets) continue;
+
+  //     for (const s of sockets) {
+  //       if (s.readyState === WebSocket.OPEN) {
+  //         s.send(JSON.stringify(payload));
+  //         delivered++;
   //       }
   //     }
   //   }
+
+  //   console.log("[RECOVERY] delivered sockets:", delivered);
   // }
 
-  // 5) Email alert (you may also want cooldown in email to avoid spam)
-//   await triggerAlertIfAbnormal(patientId, vitals);
-// }
+  public async sendRecoveryToAssigned(patientId: string) {
+  const staff = await this.assignmentCache.get(patientId);
+  if (!staff) return;
 
+  // ✅ mark alerts inactive
+  await AlertModel.updateMany(
+    { patientId, isActive: true },
+    { isActive: false, resolvedAt: new Date() }
+  );
 
-  private removeSocket(ws: WebSocket) {
-    for (const [machineKey, room] of this.rooms) {
+  const payload: RecoveryPayload = {
+    type: "recovery",
+    patientId,
+    patientName: staff.patientName,
+    createdAt: new Date().toISOString(),
+  };
+
+  let delivered = 0;
+  for (const userId of staff.staffIds) {
+    const sockets = this.socketsByUserId.get(userId);
+    if (!sockets) continue;
+
+    for (const s of sockets) {
+      if (s.readyState === WebSocket.OPEN) {
+        s.send(JSON.stringify(payload));
+        delivered++;
+      }
+    }
+  }
+
+  console.log("[RECOVERY] delivered sockets:", delivered);
+}
+
+  private buildEmailMessage(patientName: string, v: VitalData) {
+    return `
+🚨 ALERT: Abnormal Vital Signs Detected for ${patientName}
+
+Heart Rate: ${v.heartRate}
+Respiratory Rate: ${v.respiratoryRate}
+Blood Pressure: ${v.bloodPressure}
+Mean Arterial Pressure: ${v.meanArterialPressure}
+Oxygen Saturation: ${v.oxygenSaturation}
+Temperature: ${v.temperature}
+ECG: ${v.ecgWaveform}
+End Tidal CO₂: ${v.endTidalCO2}
+FiO₂: ${v.fiO2}
+Tidal Volume: ${v.tidalVolume}
+Central Venous Pressure: ${v.centralVenousPressure}
+`.trim();
+  }
+
+  private cleanupSocket(ws: WebSocket) {
+    this.removePresence(ws);
+
+    for (const [, room] of this.rooms) {
       if (room.machineSocket === ws) delete room.machineSocket;
       room.staffSockets.delete(ws);
     }
+
     this.socketUserMap.delete(ws);
   }
 
-//   private removeSocket(ws: WebSocket) {
-//   // Remove from staffSocketsByUserId (Option B registry)
-//   const decoded = this.socketUserMap.get(ws);
-
-//   if (decoded && (decoded.role === "doctor" || decoded.role === "nurse")) {
-//     const userSockets = this.staffSocketsByUserId.get(decoded._id);
-//     if (userSockets) {
-//       userSockets.delete(ws);
-
-//       // If no active sockets left for this user, remove entry
-//       if (userSockets.size === 0) {
-//         this.staffSocketsByUserId.delete(decoded._id);
-//       }
-//     }
-
-//     console.log(`${decoded.role} socket removed from registry`);
-//   }
-
-//   // Remove from patient rooms
-//   for (const [, room] of this.rooms) {
-//     if (room.machineSocket === ws) {
-//       delete room.machineSocket;
-//     }
-//     room.staffSockets.delete(ws);
-//   }
-
-//   // Remove from main socket map
-//   this.socketUserMap.delete(ws);
-// }
-
-
   private async saveBufferedVitals() {
-    for (const [patientId, vitalsArray] of this.vitalsBuffer.entries()) {
-      if (vitalsArray.length === 0) continue;
-      const vitalDocs = vitalsArray.map((v) => ({ patient: patientId, ...v }));
-      await VitalSigns.insertMany(vitalDocs);
-      console.log(` Saved ${vitalsArray.length} vitals for patient ${patientId}`);
+    for (const [patientId, arr] of this.vitalsBuffer.entries()) {
+      if (!arr.length) continue;
+
+      const docs = arr.map((v) => ({ patient: patientId, ...v }));
+      await VitalSigns.insertMany(docs);
+
+      console.log("[DB] saved vitals:", arr.length, "patient:", patientId);
       this.vitalsBuffer.set(patientId, []);
     }
   }
+
+  private async sendActiveAlertsOnJoin(ws: WebSocket, patientId: string) {
+  try {
+    const alerts = await AlertModel.find({
+      patientId,
+      isActive: true,
+    });
+
+    for (const alert of alerts) {
+      ws.send(JSON.stringify({
+  type: "alert",
+  alertId: alert._id.toString(),
+  patientId: alert.patientId,
+  patientName: alert.patientName,
+  severity: alert.severity,
+  vitals: alert.vitals,
+  alertTypes: alert.alertTypes,
+  createdAt: alert.createdAt,
+}));
+    }
+  } catch (err) {
+    console.error("[JOIN ALERT ERROR]", err);
+  }
 }
+}
+
+

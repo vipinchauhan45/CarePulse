@@ -3,36 +3,43 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-export const sendAlertEmail = async (
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.ALERT_EMAIL_USER,
+    pass: process.env.ALERT_EMAIL_PASS,
+  },
+});
+
+// Verify transporter on startup
+transporter.verify()
+  .then(() => console.log("[EMAIL] transporter verified"))
+  .catch((err) => console.error("[EMAIL] transporter verification failed:", err));
+
+export async function sendAlertEmail(
   to: string,
   subject: string,
-  message: string
-) => {
+  message: string,
+  bcc?: string[]
+) {
   try {
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.ALERT_EMAIL_USER,
-        pass: process.env.ALERT_EMAIL_PASS,
-      },
-    });
-
-    const mailOptions = {
+    const info = await transporter.sendMail({
       from: `"Smart Health Monitor" <${process.env.ALERT_EMAIL_USER}>`,
       to,
+      bcc,
       subject,
       html: `
         <div style="font-family: Arial, sans-serif;">
           <h2 style="color: red;">Patient Alert</h2>
-          <p>${message}</p>
+          <pre style="white-space: pre-wrap;">${message}</pre>
           <p><strong>Check the patient dashboard immediately.</strong></p>
         </div>
       `,
-    };
+    });
 
-    await transporter.sendMail(mailOptions);
-    console.log(`Alert email sent to ${to}`);
-  } catch (error) {
-    console.error(" Error sending alert email:", error);
+    console.log("[EMAIL] sent successfully:", info.messageId);
+  } catch (err) {
+    console.error("[EMAIL] send failed:", err);
+    throw err;
   }
-};
+}
