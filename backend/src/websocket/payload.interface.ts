@@ -66,7 +66,7 @@ export type AlertSeverity = "high" | "critical";
 export interface AlertPayload {
   type: "alert";
 
-  alertId: string; // ✅ ADD THIS
+  alertId: string;
 
   severity: "high" | "critical";
   patientId: string;
@@ -74,6 +74,8 @@ export interface AlertPayload {
   vitals: VitalData;
   createdAt: string;
   alertTypes: string[];
+
+  acknowledged: boolean;
 }
 
 export interface RecoveryPayload {

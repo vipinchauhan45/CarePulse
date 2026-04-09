@@ -35,6 +35,7 @@ const alertSchema = new Schema<IAlert>(
       type: Schema.Types.ObjectId,
       ref: "Patient",
       required: true,
+      index: true, //  quick lookup
     },
 
     patientName: {
@@ -46,6 +47,7 @@ const alertSchema = new Schema<IAlert>(
       type: String,
       enum: ["high", "critical"],
       required: true,
+      index: true,
     },
 
     alertTypes: [
@@ -72,12 +74,13 @@ const alertSchema = new Schema<IAlert>(
     isActive: {
       type: Boolean,
       default: true,
+      index: true,
     },
 
-    // ✅ for future (doctor acknowledges alert)
     acknowledged: {
       type: Boolean,
       default: false,
+      index: true, //  for future "read/unread"
     },
 
     resolvedAt: {
@@ -85,15 +88,18 @@ const alertSchema = new Schema<IAlert>(
     },
   },
   {
-    timestamps: true, // automatically adds createdAt & updatedAt
+    timestamps: true,
   }
 );
 
 
-// ✅ INDEX 1: fast lookup for active alerts
-alertSchema.index({ patientId: 1, isActive: 1 });
+//  COMPOUND INDEX (BEST FOR YOUR MAIN QUERY)
+// used in: getActiveAlerts + sorting
+alertSchema.index({ patientId: 1, isActive: 1, createdAt: -1 });
 
-// ✅ INDEX 2: prevent duplicate active alerts (same severity)
+
+//  PREVENT DUPLICATE ACTIVE ALERTS (SAFE VERSION)
+// allows different alertTypes but prevents same severity spam
 alertSchema.index(
   { patientId: 1, severity: 1, isActive: 1 },
   {
@@ -101,5 +107,10 @@ alertSchema.index(
     partialFilterExpression: { isActive: true },
   }
 );
+
+
+//  OPTIONAL (FOR FUTURE: unread notifications)
+alertSchema.index({ acknowledged: 1, createdAt: -1 });
+
 
 export const AlertModel = model<IAlert>("Alert", alertSchema);

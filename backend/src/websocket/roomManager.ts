@@ -105,7 +105,12 @@ export class RoomManager {
     this.socketsByUserId.get(userId)!.add(ws);
     this.userIdBySocket.set(ws, userId);
 
-    console.log("[PRESENCE] add:", userId, "sockets:", this.socketsByUserId.get(userId)!.size);
+    console.log(
+      "[PRESENCE] add:",
+      userId,
+      "sockets:",
+      this.socketsByUserId.get(userId)!.size,
+    );
   }
 
   private removePresence(ws: WebSocket) {
@@ -120,7 +125,12 @@ export class RoomManager {
 
     this.userIdBySocket.delete(ws);
 
-    console.log("[PRESENCE] remove:", userId, "remaining:", this.socketsByUserId.get(userId)?.size ?? 0);
+    console.log(
+      "[PRESENCE] remove:",
+      userId,
+      "remaining:",
+      this.socketsByUserId.get(userId)?.size ?? 0,
+    );
   }
 
   private async handleConnect(ws: WebSocket, msg: WebSocketPayload) {
@@ -128,7 +138,9 @@ export class RoomManager {
       this.socketUserMap.set(ws, { _id: "", email: "", role: "machine" });
       console.log("[CONNECT] machine connected (awaiting join)");
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ status: "Machine connected. Send join next." }));
+        ws.send(
+          JSON.stringify({ status: "Machine connected. Send join next." }),
+        );
       }
       return;
     }
@@ -143,7 +155,10 @@ export class RoomManager {
     }
 
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as DecodedToken;
+      const decoded = jwt.verify(
+        token,
+        process.env.JWT_SECRET as string,
+      ) as DecodedToken;
 
       if (decoded.role !== "doctor" && decoded.role !== "nurse") {
         console.log("[CONNECT] invalid role:", decoded.role);
@@ -184,14 +199,19 @@ export class RoomManager {
     if (isMachine === "true") {
       const patient = await Patient.findById(patientId).exec();
       if (!patient || patient.machineKey !== machineKey) {
-        console.log("[JOIN] machine invalid machineKey/patientId:", machineKey, patientId);
+        console.log(
+          "[JOIN] machine invalid machineKey/patientId:",
+          machineKey,
+          patientId,
+        );
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ error: "Invalid machineKey/patientId" }));
         }
         return;
       }
 
-      if (!this.rooms.has(machineKey)) this.rooms.set(machineKey, { staffSockets: new Set() });
+      if (!this.rooms.has(machineKey))
+        this.rooms.set(machineKey, { staffSockets: new Set() });
       const room = this.rooms.get(machineKey)!;
       room.machineSocket = ws;
       room.patientId = patientId;
@@ -207,7 +227,9 @@ export class RoomManager {
     if (!decoded) {
       console.log("[JOIN] staff tried without connect/token");
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ error: "Unauthorized. Connect with token first." }));
+        ws.send(
+          JSON.stringify({ error: "Unauthorized. Connect with token first." }),
+        );
       }
       return;
     }
@@ -235,12 +257,20 @@ export class RoomManager {
       return;
     }
 
-    if (!this.rooms.has(machineKey)) this.rooms.set(machineKey, { staffSockets: new Set() });
+    if (!this.rooms.has(machineKey))
+      this.rooms.set(machineKey, { staffSockets: new Set() });
     const room = this.rooms.get(machineKey)!;
     room.staffSockets.add(ws);
     room.patientId = patientId;
 
-    console.log("[JOIN] staff joined room:", decoded._id, "machineKey:", machineKey, "patient:", patientId);
+    console.log(
+      "[JOIN] staff joined room:",
+      decoded._id,
+      "machineKey:",
+      machineKey,
+      "patient:",
+      patientId,
+    );
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ status: "Joined room" }));
     }
@@ -267,7 +297,14 @@ export class RoomManager {
 
     const { machineKey, patientId, vitals } = msg as MachineMessagePayload;
 
-    console.log("[VITALS] received:", { machineKey, patientId, hr: vitals.heartRate, spo2: vitals.oxygenSaturation, map: vitals.meanArterialPressure, temp: vitals.temperature });
+    console.log("[VITALS] received:", {
+      machineKey,
+      patientId,
+      hr: vitals.heartRate,
+      spo2: vitals.oxygenSaturation,
+      map: vitals.meanArterialPressure,
+      temp: vitals.temperature,
+    });
 
     const room = this.rooms.get(machineKey);
     const watchers = room?.staffSockets.size ?? 0;
@@ -284,18 +321,26 @@ export class RoomManager {
     if (!this.vitalsBuffer.has(patientId)) this.vitalsBuffer.set(patientId, []);
     this.vitalsBuffer.get(patientId)!.push(vitals);
 
-    this.handleAlerting(patientId, vitals).catch(err => {
-  console.error("[ALERT ERROR]", err);
-});
+    this.handleAlerting(patientId, vitals).catch((err) => {
+      console.error("[ALERT ERROR]", err);
+    });
   }
-
 
   private async handleAlerting(patientId: string, vitals: VitalData) {
     const severity = getSeverity(vitals);
     const prev = this.patientState.get(patientId) ?? "normal";
     const next = severity ? "abnormal" : "normal";
 
-    console.log("[ALERT] patient:", patientId, "prev:", prev, "next:", next, "severity:", severity);
+    console.log(
+      "[ALERT] patient:",
+      patientId,
+      "prev:",
+      prev,
+      "next:",
+      next,
+      "severity:",
+      severity,
+    );
 
     if (severity && prev === "normal") {
       this.patientState.set(patientId, "abnormal");
@@ -318,7 +363,7 @@ export class RoomManager {
     patientId: string,
     vitals: VitalData,
     severity: "high" | "critical",
-    alertTypes: string[]
+    alertTypes: string[],
   ) {
     const staff = await this.assignmentCache.get(patientId);
     if (!staff) {
@@ -326,7 +371,14 @@ export class RoomManager {
       return;
     }
 
-    console.log("[ASSIGN] patient:", patientId, "staffIds:", staff.staffIds.length, "emails:", staff.emails);
+    console.log(
+      "[ASSIGN] patient:",
+      patientId,
+      "staffIds:",
+      staff.staffIds.length,
+      "emails:",
+      staff.emails,
+    );
 
     const uiKeys = alertTypes.map((t) => `ui:${patientId}:${t}`);
     const emailKeys = alertTypes.map((t) => `email:${patientId}:${t}`);
@@ -337,62 +389,41 @@ export class RoomManager {
     console.log("[COOLDOWN] canSendUI:", canSendUI, "keys:", uiKeys);
     console.log("[COOLDOWN] canSendEmail:", canSendEmail, "keys:", emailKeys);
 
-    // const payload: AlertPayload = {
-    //   type: "alert",
-    //   severity,
-    //   patientId,
-    //   patientName: staff.patientName,
-    //   vitals,
-    //   createdAt: new Date().toISOString(),
-    //   alertTypes,
-    // };
-    
-    // ✅ CHECK EXISTING ALERT (ADD HERE)
-const existing = await AlertModel.findOne({
-  patientId,
-  isActive: true,
-  severity,
-  alertTypes: { $in: alertTypes },
-});
 
-if (existing) {
-  console.log("[ALERT] already active, skipping everything");
-  return; // ✅ stop UI + email also
-}
+    let newAlert;
 
-// ✅ create alert (store result)
-const newAlert = await AlertModel.create({
-  patientId,
-  patientName: staff.patientName,
-  severity,
-  vitals,
-  alertTypes,
-  isActive: true,
-  createdAt: new Date(),
-});
+    try {
+      newAlert = await AlertModel.create({
+        patientId,
+        patientName: staff.patientName,
+        severity,
+        vitals,
+        alertTypes,
+        isActive: true,
+        createdAt: new Date(),
+      });
+    } catch (err: any) {
+      //  prevent crash due to duplicate index
+      if (err.code === 11000) {
+        console.log("[ALERT] duplicate prevented by index");
+        return; // stop further execution
+      }
+      throw err;
+    }
 
-// 👇 THEN CONTINUE YOUR EXISTING LOGIC
+    //  THEN CONTINUE YOUR EXISTING LOGIC
 
-const payload: AlertPayload = {
-  type: "alert",
-  alertId: newAlert._id.toString(), // ✅ NEW (important for frontend)
-  severity,
-  patientId,
-  patientName: staff.patientName,
-  vitals,
-  createdAt: newAlert.createdAt.toISOString(),
-  alertTypes,
-};
-
-//     await AlertModel.create({
-//   patientId,
-//   patientName: staff.patientName,
-//   severity,
-//   vitals,
-//   alertTypes,
-//   isActive: true,
-//   createdAt: new Date(),
-// });
+    const payload: AlertPayload = {
+      type: "alert",
+      alertId: newAlert._id.toString(),
+      severity,
+      patientId,
+      patientName: staff.patientName,
+      vitals,
+      createdAt: newAlert.createdAt.toISOString(),
+      alertTypes,
+      acknowledged: newAlert.acknowledged,
+    };
 
     if (canSendUI) {
       let delivered = 0;
@@ -421,7 +452,12 @@ const payload: AlertPayload = {
 
       if (USE_BCC) {
         try {
-          await sendAlertEmail(process.env.ALERT_EMAIL_USER as string, subject, message, staff.emails);
+          await sendAlertEmail(
+            process.env.ALERT_EMAIL_USER as string,
+            subject,
+            message,
+            staff.emails,
+          );
           console.log("[EMAIL] BCC sent to:", staff.emails);
         } catch (err) {
           console.error("[EMAIL] BCC failed:", err);
@@ -441,69 +477,42 @@ const payload: AlertPayload = {
     }
   }
 
-  // public async sendRecoveryToAssigned(patientId: string) {
-  //   const staff = await this.assignmentCache.get(patientId);
-  //   if (!staff) return;
-
-  //   const payload: RecoveryPayload = {
-  //     type: "recovery",
-  //     patientId,
-  //     patientName: staff.patientName,
-  //     createdAt: new Date().toISOString(),
-  //   };
-
-  //   let delivered = 0;
-  //   for (const userId of staff.staffIds) {
-  //     const sockets = this.socketsByUserId.get(userId);
-  //     if (!sockets) continue;
-
-  //     for (const s of sockets) {
-  //       if (s.readyState === WebSocket.OPEN) {
-  //         s.send(JSON.stringify(payload));
-  //         delivered++;
-  //       }
-  //     }
-  //   }
-
-  //   console.log("[RECOVERY] delivered sockets:", delivered);
-  // }
-
   public async sendRecoveryToAssigned(patientId: string) {
-  const staff = await this.assignmentCache.get(patientId);
-  if (!staff) return;
+    const staff = await this.assignmentCache.get(patientId);
+    if (!staff) return;
 
-  // ✅ mark alerts inactive
-  await AlertModel.updateMany(
-    { patientId, isActive: true },
-    { isActive: false, resolvedAt: new Date() }
-  );
+    // mark alerts inactive
+    await AlertModel.updateMany(
+      { patientId, isActive: true },
+      { isActive: false, resolvedAt: new Date() },
+    );
 
-  const payload: RecoveryPayload = {
-    type: "recovery",
-    patientId,
-    patientName: staff.patientName,
-    createdAt: new Date().toISOString(),
-  };
+    const payload: RecoveryPayload = {
+      type: "recovery",
+      patientId,
+      patientName: staff.patientName,
+      createdAt: new Date().toISOString(),
+    };
 
-  let delivered = 0;
-  for (const userId of staff.staffIds) {
-    const sockets = this.socketsByUserId.get(userId);
-    if (!sockets) continue;
+    let delivered = 0;
+    for (const userId of staff.staffIds) {
+      const sockets = this.socketsByUserId.get(userId);
+      if (!sockets) continue;
 
-    for (const s of sockets) {
-      if (s.readyState === WebSocket.OPEN) {
-        s.send(JSON.stringify(payload));
-        delivered++;
+      for (const s of sockets) {
+        if (s.readyState === WebSocket.OPEN) {
+          s.send(JSON.stringify(payload));
+          delivered++;
+        }
       }
     }
-  }
 
-  console.log("[RECOVERY] delivered sockets:", delivered);
-}
+    console.log("[RECOVERY] delivered sockets:", delivered);
+  }
 
   private buildEmailMessage(patientName: string, v: VitalData) {
     return `
-🚨 ALERT: Abnormal Vital Signs Detected for ${patientName}
+  ALERT: Abnormal Vital Signs Detected for ${patientName}
 
 Heart Rate: ${v.heartRate}
 Respiratory Rate: ${v.respiratoryRate}
@@ -543,28 +552,29 @@ Central Venous Pressure: ${v.centralVenousPressure}
   }
 
   private async sendActiveAlertsOnJoin(ws: WebSocket, patientId: string) {
-  try {
-    const alerts = await AlertModel.find({
-      patientId,
-      isActive: true,
-    });
+    try {
+      const alerts = await AlertModel.find({
+        patientId,
+        isActive: true,
+      });
 
-    for (const alert of alerts) {
-      ws.send(JSON.stringify({
-  type: "alert",
-  alertId: alert._id.toString(),
-  patientId: alert.patientId,
-  patientName: alert.patientName,
-  severity: alert.severity,
-  vitals: alert.vitals,
-  alertTypes: alert.alertTypes,
-  createdAt: alert.createdAt,
-}));
+      for (const alert of alerts) {
+        ws.send(
+          JSON.stringify({
+            type: "alert",
+            alertId: alert._id.toString(),
+            patientId: alert.patientId,
+            patientName: alert.patientName,
+            severity: alert.severity,
+            vitals: alert.vitals,
+            alertTypes: alert.alertTypes,
+            createdAt: alert.createdAt,
+            acknowledged: alert.acknowledged ?? false,
+          }),
+        );
+      }
+    } catch (err) {
+      console.error("[JOIN ALERT ERROR]", err);
     }
-  } catch (err) {
-    console.error("[JOIN ALERT ERROR]", err);
   }
 }
-}
-
-

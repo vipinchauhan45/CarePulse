@@ -5,6 +5,8 @@ import userRouter from "./routes/authRoutes.js";
 import patientRoute from "./routes/patientRoutes.js";
 import vitalsRoute from "./routes/vitalRoutes.js";
 import cors from "cors";
+import alertRoute from "./routes/alert.routes.js";
+
 const app: Application = express();
 app.use(cors());
 app.use(express.json());
@@ -13,4 +15,5 @@ app.use("/admin", adminRoute);
 app.use("/user", userRouter);
 app.use("/patient", patientRoute);
 app.use("/vitals", vitalsRoute);
+app.use("/alert", alertRoute);
 export default app;
