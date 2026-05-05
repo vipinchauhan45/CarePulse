@@ -1,0 +1,218 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Smart Health Monitor Design System */
+
+@layer base {
+  :root {
+    /* Healthcare Blue - Primary */
+    --primary: 210 80% 45%;
+    --primary-foreground: 0 0% 100%;
+    
+    /* Background tones */
+    --background: 210 20% 98%;
+    --foreground: 215 25% 15%;
+    
+    /* Cards */
+    --card: 0 0% 100%;
+    --card-foreground: 215 25% 15%;
+    
+    /* Popover */
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 25% 15%;
+    
+    /* Secondary - Soft gray-blue */
+    --secondary: 210 15% 93%;
+    --secondary-foreground: 215 25% 25%;
+    
+    /* Muted */
+    --muted: 210 15% 95%;
+    --muted-foreground: 215 15% 45%;
+    
+    /* Accent */
+    --accent: 210 20% 90%;
+    --accent-foreground: 215 25% 20%;
+    
+    /* Status Colors */
+    --success: 152 60% 40%;
+    --success-foreground: 0 0% 100%;
+    
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    
+    --critical: 0 84% 60%;
+    --critical-foreground: 0 0% 100%;
+    
+    /* Vitals Colors */
+    --vital-heart: 0 80% 55%;
+    --vital-oxygen: 200 85% 50%;
+    --vital-temp: 25 95% 55%;
+    --vital-pressure: 280 70% 55%;
+    --vital-respiratory: 160 70% 45%;
+    
+    /* UI Elements */
+    --border: 210 20% 88%;
+    --input: 210 20% 88%;
+    --ring: 210 80% 45%;
+    
+    --radius: 0.625rem;
+    
+    /* Sidebar */
+    --sidebar-background: 215 25% 15%;
+    --sidebar-foreground: 210 15% 90%;
+    --sidebar-primary: 210 80% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 215 25% 22%;
+    --sidebar-accent-foreground: 210 15% 90%;
+    --sidebar-border: 215 20% 25%;
+    --sidebar-ring: 210 80% 55%;
+    
+    /* Chart grid */
+    --chart-grid: 210 20% 92%;
+  }
+
+  .dark {
+    --primary: 210 75% 55%;
+    --primary-foreground: 0 0% 100%;
+    
+    --background: 220 25% 8%;
+    --foreground: 210 15% 92%;
+    
+    --card: 220 25% 12%;
+    --card-foreground: 210 15% 92%;
+    
+    --popover: 220 25% 12%;
+    --popover-foreground: 210 15% 92%;
+    
+    --secondary: 220 20% 18%;
+    --secondary-foreground: 210 15% 85%;
+    
+    --muted: 220 20% 15%;
+    --muted-foreground: 215 15% 55%;
+    
+    --accent: 220 20% 20%;
+    --accent-foreground: 210 15% 90%;
+    
+    --success: 152 55% 45%;
+    --success-foreground: 0 0% 100%;
+    
+    --warning: 38 90% 55%;
+    --warning-foreground: 0 0% 100%;
+    
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
+    
+    --critical: 0 80% 60%;
+    --critical-foreground: 0 0% 100%;
+    
+    --vital-heart: 0 75% 60%;
+    --vital-oxygen: 200 80% 55%;
+    --vital-temp: 25 90% 58%;
+    --vital-pressure: 280 65% 60%;
+    --vital-respiratory: 160 65% 50%;
+    
+    --border: 220 20% 20%;
+    --input: 220 20% 20%;
+    --ring: 210 75% 55%;
+    
+    --sidebar-background: 220 30% 6%;
+    --sidebar-foreground: 210 15% 85%;
+    --sidebar-primary: 210 75% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 25% 12%;
+    --sidebar-accent-foreground: 210 15% 85%;
+    --sidebar-border: 220 20% 15%;
+    --sidebar-ring: 210 75% 55%;
+    
+    --chart-grid: 220 20% 18%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+  
+  /* Monospace for vital readings */
+  .font-mono-vital {
+    font-family: 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  /* Vital card glow effects */
+  .vital-glow-heart {
+    box-shadow: 0 0 20px hsl(var(--vital-heart) / 0.15);
+  }
+  
+  .vital-glow-oxygen {
+    box-shadow: 0 0 20px hsl(var(--vital-oxygen) / 0.15);
+  }
+  
+  .vital-glow-temp {
+    box-shadow: 0 0 20px hsl(var(--vital-temp) / 0.15);
+  }
+  
+  .vital-glow-pressure {
+    box-shadow: 0 0 20px hsl(var(--vital-pressure) / 0.15);
+  }
+  
+  /* Pulse animation for live indicator */
+  @keyframes pulse-live {
+    0%, 100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.5;
+      transform: scale(1.1);
+    }
+  }
+  
+  .animate-pulse-live {
+    animation: pulse-live 2s ease-in-out infinite;
+  }
+  
+  /* ECG line animation */
+  @keyframes ecg-sweep {
+    0% {
+      stroke-dashoffset: 1000;
+    }
+    100% {
+      stroke-dashoffset: 0;
+    }
+  }
+  
+  .animate-ecg {
+    animation: ecg-sweep 2s linear infinite;
+    stroke-dasharray: 1000;
+  }
+  
+  /* Status badge styles */
+  .status-normal {
+    @apply bg-success/10 text-success border-success/20;
+  }
+  
+  .status-warning {
+    @apply bg-warning/10 text-warning border-warning/20;
+  }
+  
+  .status-critical {
+    @apply bg-critical/10 text-critical border-critical/20;
+  }
+  
+  /* Card hover effect */
+  .card-interactive {
+    @apply transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5;
+  }
+}
