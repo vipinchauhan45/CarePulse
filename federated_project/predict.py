@@ -2,11 +2,9 @@ import joblib
 import numpy as np
 import pandas as pd
 
-#Load 
 model  = joblib.load("global_model.pkl")
 scaler = joblib.load("scaler.pkl")
 
-# Feature columns (must match prepareData.ipynb order) 
 COLUMNS = [
     "Heart Rate", "Respiratory Rate", "Body Temperature",
     "Oxygen Saturation", "Systolic Blood Pressure",
@@ -16,13 +14,11 @@ COLUMNS = [
     "Derived_BMI", "Derived_MAP",
 ]
 
-#Helper: derive engineered features from raw vitals 
-
 def build_patient_row(hr, rr, bt, spo2, sbp, dbp, age, gender, weight, height):
-    pp  = sbp - dbp                  # Pulse Pressure
-    bmi = weight / (height ** 2)     # BMI
-    hrv = 1000 / hr if hr > 0 else 0 # Simplified HRV proxy
-    map_ = dbp + (pp / 3)            # Mean Arterial Pressure
+    pp  = sbp - dbp                 
+    bmi = weight / (height ** 2)     
+    hrv = 1000 / hr if hr > 0 else 0 
+    map_ = dbp + (pp / 3)            
 
     return {
         "Heart Rate": hr, "Respiratory Rate": rr,
@@ -45,15 +41,12 @@ raw_patients = [
 
 patients_df = pd.DataFrame(raw_patients, columns=COLUMNS)
 
-# ── Scale raw input ONCE (scaler was fit on raw vitals in prepareData.ipynb) ──
 patients_scaled = scaler.transform(patients_df)
 
-# Predict 
 predictions    = model.predict(patients_scaled)
 probabilities  = model.predict_proba(patients_scaled)
 decision_vals  = model.decision_function(patients_scaled)
 
-# Display 
 print("\n" + "=" * 55)
 print("  ICU PATIENT RISK PREDICTION  (Federated Global Model)")
 print("=" * 55)
