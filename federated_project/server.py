@@ -4,8 +4,6 @@ import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-#Metrics aggregation 
-
 def weighted_average(metrics):
     """Weighted average of accuracy across clients."""
     total_examples = sum(n for n, _ in metrics)
@@ -19,8 +17,6 @@ def weighted_average(metrics):
     )
     return {"accuracy": agg_accuracy, "f1": agg_f1}
 
-
-#Saved weights callback 
 import joblib
 
 class SaveModelStrategy(fl.server.strategy.FedAvg):
@@ -38,10 +34,9 @@ class SaveModelStrategy(fl.server.strategy.FedAvg):
 
         return aggregated_parameters, aggregated_metrics
 
-#Strategy
 
 strategy = SaveModelStrategy(
-    fraction_fit=1.0,           # use ALL available clients each round
+    fraction_fit=1.0,           
     fraction_evaluate=1.0,
     min_fit_clients=3,
     min_evaluate_clients=3,
@@ -49,8 +44,6 @@ strategy = SaveModelStrategy(
     fit_metrics_aggregation_fn=weighted_average,
     evaluate_metrics_aggregation_fn=weighted_average,
 )
-
-# Launch server
 
 if __name__ == "__main__":
     print("Starting Federated Learning Server")
