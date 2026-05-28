@@ -12,12 +12,8 @@ def build_global_model() -> SGDClassifier:
     print("Loading global_weights.npy")
     weights = joblib.load("global_weights.pkl")
 
-    coef_      = weights[0]   # shape: (1, n_features)
-    intercept_ = weights[1]   # shape: (1,)
-
-    # Build a dummy model with the right architecture
-    # We need coef_ / intercept_ shapes → partial_fit once then overwrite
-    # Use hospitalA just to get class info
+    coef_      = weights[0]   
+    intercept_ = weights[1]   
     X_train, X_test, y_train, y_test = load_data("data/hospitalA.csv")
 
     model = SGDClassifier(
@@ -28,8 +24,6 @@ def build_global_model() -> SGDClassifier:
         random_state=42,
     )
     model.partial_fit(X_train[:10], y_train[:10], classes=np.array([0, 1]))
-
-    # Overwrite with global weights
     model.coef_      = coef_
     model.intercept_ = intercept_
 
