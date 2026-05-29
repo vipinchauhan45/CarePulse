@@ -26,7 +26,6 @@ class HospitalClient(fl.client.NumPyClient):
         return get_model_params(model)
 
     def fit(self, parameters, config):
-        """Receive global weights → train locally → return updated weights."""
         set_model_params(model, parameters)
 
         for _ in range(5):
@@ -38,7 +37,6 @@ class HospitalClient(fl.client.NumPyClient):
         return get_model_params(model), len(X_train), {"accuracy": float(train_acc)}
 
     def evaluate(self, parameters, config):
-        """Receive global weights → evaluate on local test set → report metrics."""
         set_model_params(model, parameters)
 
         y_pred      = model.predict(X_test)
