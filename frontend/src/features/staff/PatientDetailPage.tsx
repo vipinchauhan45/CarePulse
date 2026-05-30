@@ -112,12 +112,29 @@ const PatientDetailPage: React.FC = () => {
     },
   });
 
-  const decodeEcgWaveform = (encoded?: string): number[] => {
-    if (!encoded) return [];
+  const decodeEcgWaveform = (base64?: string): number[] => {
+    if (!base64) return [];
 
     try {
-      const decoded = atob(encoded);
-      return decoded.split(",").map(Number);
+      const binary = atob(base64);
+      const samples: number[] = [];
+
+      for (let i = 0; i < binary.length - 1; i += 2) {
+        const high = binary.charCodeAt(i);
+        const low = binary.charCodeAt(i + 1);
+
+        let value = (high << 8) | low;
+
+        if (value > 32767) {
+          value -= 65536;
+        }
+
+        samples.push(value);
+      }
+
+      console.log("[ECG DECODED]", samples);
+
+      return samples;
     } catch (error) {
       console.error("ECG decode failed", error);
       return [];
@@ -163,7 +180,8 @@ const PatientDetailPage: React.FC = () => {
 
       if (vitals.ecgWaveform) {
         const samples = decodeEcgWaveform(vitals.ecgWaveform);
-
+        console.log("[ECG SAMPLES]", samples.length);
+        console.log(samples);
         setEcgSeries((prev) => {
           const now = Date.now();
 
@@ -515,181 +533,179 @@ const PatientDetailPage: React.FC = () => {
                 {/* History Controls */}
 
                 {/* <TabsContent value="history" className="mt-4 space-y-6"> */}
-                  {/* 🔹 Controls */}
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground">
-                        Limit:
-                      </span>
-                      <Select
-                        value={historyLimit.toString()}
-                        onValueChange={(v) => setHistoryLimit(Number(v))}
-                      >
-                        <SelectTrigger className="w-32">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="200">200 records</SelectItem>
-                          <SelectItem value="500">500 records</SelectItem>
-                          <SelectItem value="1000">1000 records</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    {historyData && (
-                      <span className="text-sm text-muted-foreground">
-                        Showing {historyData.data?.length || 0} of{" "}
-                        {historyData.total || 0} records
-                      </span>
-                    )}
+                {/* 🔹 Controls */}
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">
+                      Limit:
+                    </span>
+                    <Select
+                      value={historyLimit.toString()}
+                      onValueChange={(v) => setHistoryLimit(Number(v))}
+                    >
+                      <SelectTrigger className="w-32">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="200">200 records</SelectItem>
+                        <SelectItem value="500">500 records</SelectItem>
+                        <SelectItem value="1000">1000 records</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
 
-                  {/* 🔹 Loading */}
-                  {isLoadingHistory ? (
-                    <div className="space-y-4">
-                      {[1, 2, 3].map((i) => (
-                        <Skeleton key={i} className="h-48" />
-                      ))}
-                    </div>
-                  ) : historyData?.data?.length ? (
-                    <div className="space-y-6">
-                      {/* MULTIPLE HISTORY GRAPHS */}
-                      <VitalChart
-                        title="Heart Rate History"
-                        data={historyData.data.map((v) => ({
-                          timestamp: new Date(v.recordedAt).getTime(),
-                          heartRate: v.heartRate,
-                          oxygenSaturation: v.oxygenSaturation,
-                          temperature: v.temperature,
-                          meanArterialPressure: v.meanArterialPressure,
-                          respiratoryRate: v.respiratoryRate,
-                        }))}
-                        dataKey="heartRate"
-                        color="hsl(var(--vital-heart))"
-                        unit="bpm"
-                      />
+                  {historyData && (
+                    <span className="text-sm text-muted-foreground">
+                      Showing {historyData.data?.length || 0} of{" "}
+                      {historyData.total || 0} records
+                    </span>
+                  )}
+                </div>
 
-                      <VitalChart
-                        title="Oxygen Saturation History"
-                        data={historyData.data.map((v) => ({
-                          timestamp: new Date(v.recordedAt).getTime(),
-                          heartRate: v.heartRate,
-                          oxygenSaturation: v.oxygenSaturation,
-                          temperature: v.temperature,
-                          meanArterialPressure: v.meanArterialPressure,
-                          respiratoryRate: v.respiratoryRate,
-                        }))}
-                        dataKey="oxygenSaturation"
-                        color="hsl(var(--vital-oxygen))"
-                        unit="%"
-                        domain={[85, 100]}
-                      />
+                {/* 🔹 Loading */}
+                {isLoadingHistory ? (
+                  <div className="space-y-4">
+                    {[1, 2, 3].map((i) => (
+                      <Skeleton key={i} className="h-48" />
+                    ))}
+                  </div>
+                ) : historyData?.data?.length ? (
+                  <div className="space-y-6">
+                    {/* MULTIPLE HISTORY GRAPHS */}
+                    <VitalChart
+                      title="Heart Rate History"
+                      data={historyData.data.map((v) => ({
+                        timestamp: new Date(v.recordedAt).getTime(),
+                        heartRate: v.heartRate,
+                        oxygenSaturation: v.oxygenSaturation,
+                        temperature: v.temperature,
+                        meanArterialPressure: v.meanArterialPressure,
+                        respiratoryRate: v.respiratoryRate,
+                      }))}
+                      dataKey="heartRate"
+                      color="hsl(var(--vital-heart))"
+                      unit="bpm"
+                    />
 
-                      <VitalChart
-                        title="Mean Arterial Pressure History"
-                        data={historyData.data.map((v) => ({
-                          timestamp: new Date(v.recordedAt).getTime(),
-                          heartRate: v.heartRate,
-                          oxygenSaturation: v.oxygenSaturation,
-                          temperature: v.temperature,
-                          meanArterialPressure: v.meanArterialPressure,
-                          respiratoryRate: v.respiratoryRate,
-                        }))}
-                        dataKey="meanArterialPressure"
-                        color="hsl(var(--vital-pressure))"
-                        unit="mmHg"
-                      />
-                      <VitalChart
-                        title="ECG Waveform History"
-                        data={historyData.data.flatMap((v) => {
-                          if (!v.ecgWaveform) return [];
+                    <VitalChart
+                      title="Oxygen Saturation History"
+                      data={historyData.data.map((v) => ({
+                        timestamp: new Date(v.recordedAt).getTime(),
+                        heartRate: v.heartRate,
+                        oxygenSaturation: v.oxygenSaturation,
+                        temperature: v.temperature,
+                        meanArterialPressure: v.meanArterialPressure,
+                        respiratoryRate: v.respiratoryRate,
+                      }))}
+                      dataKey="oxygenSaturation"
+                      color="hsl(var(--vital-oxygen))"
+                      unit="%"
+                      domain={[85, 100]}
+                    />
 
-                          const samples = decodeEcgWaveform(v.ecgWaveform);
+                    <VitalChart
+                      title="Mean Arterial Pressure History"
+                      data={historyData.data.map((v) => ({
+                        timestamp: new Date(v.recordedAt).getTime(),
+                        heartRate: v.heartRate,
+                        oxygenSaturation: v.oxygenSaturation,
+                        temperature: v.temperature,
+                        meanArterialPressure: v.meanArterialPressure,
+                        respiratoryRate: v.respiratoryRate,
+                      }))}
+                      dataKey="meanArterialPressure"
+                      color="hsl(var(--vital-pressure))"
+                      unit="mmHg"
+                    />
+                    <VitalChart
+                      title="ECG Waveform History"
+                      data={historyData.data.flatMap((v) => {
+                        if (!v.ecgWaveform) return [];
 
-                          return samples.map((sample, index) => ({
-                            timestamp: new Date(v.recordedAt).getTime() + index,
-                            ecgValue: sample,
-                          }));
-                        })}
-                        dataKey="ecgValue"
-                        color="hsl(var(--vital-heart))"
-                        unit="mV"
-                      />
-                      {/* TABLE BELOW GRAPHS */}
-                      <Card>
-                        <CardContent className="p-4">
-                          <h3 className="text-lg font-semibold mb-4">
-                            Vitals History Table
-                          </h3>
+                        const samples = decodeEcgWaveform(v.ecgWaveform);
 
-                          <div className="max-h-[400px] overflow-y-auto border rounded-md">
-                            <table className="w-full text-sm">
-                              <thead className="sticky top-0 bg-muted">
-                                <tr>
-                                  <th className="p-2 text-left">Time</th>
-                                  <th className="p-2">HR</th>
-                                  <th className="p-2">SpO₂</th>
-                                  <th className="p-2">Temp</th>
-                                  <th className="p-2">MAP</th>
-                                  <th className="p-2">RR</th>
-                                </tr>
-                              </thead>
+                        return samples.map((sample, index) => ({
+                          timestamp: new Date(v.recordedAt).getTime() + index,
+                          ecgValue: sample,
+                        }));
+                      })}
+                      dataKey="ecgValue"
+                      color="hsl(var(--vital-heart))"
+                      unit="mV"
+                    />
+                    {/* TABLE BELOW GRAPHS */}
+                    <Card>
+                      <CardContent className="p-4">
+                        <h3 className="text-lg font-semibold mb-4">
+                          Vitals History Table
+                        </h3>
 
-                              <tbody>
-                                {historyData.data.map((v, index) => {
-                                  const isCritical =
-                                    v.heartRate > 130 ||
-                                    v.oxygenSaturation < 90 ||
-                                    v.meanArterialPressure < 65;
+                        <div className="max-h-[400px] overflow-y-auto border rounded-md">
+                          <table className="w-full text-sm">
+                            <thead className="sticky top-0 bg-muted">
+                              <tr>
+                                <th className="p-2 text-left">Time</th>
+                                <th className="p-2">HR</th>
+                                <th className="p-2">SpO₂</th>
+                                <th className="p-2">Temp</th>
+                                <th className="p-2">MAP</th>
+                                <th className="p-2">RR</th>
+                              </tr>
+                            </thead>
 
-                                  return (
-                                    <tr
-                                      key={index}
-                                      className={`border-t ${
-                                        isCritical
-                                          ? "bg-red-100 text-red-700 font-semibold"
-                                          : ""
-                                      }`}
-                                    >
-                                      <td className="p-2">
-                                        {new Date(
-                                          v.recordedAt,
-                                        ).toLocaleString()}
-                                      </td>
-                                      <td className="p-2 text-center">
-                                        {v.heartRate}
-                                      </td>
-                                      <td className="p-2 text-center">
-                                        {v.oxygenSaturation}
-                                      </td>
-                                      <td className="p-2 text-center">
-                                        {v.temperature}
-                                      </td>
-                                      <td className="p-2 text-center">
-                                        {v.meanArterialPressure}
-                                      </td>
-                                      <td className="p-2 text-center">
-                                        {v.respiratoryRate}
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </div>
-                  ) : (
-                    <Card className="border-border">
-                      <CardContent className="p-12 text-center">
-                        <Activity className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
-                        <p className="text-muted-foreground">
-                          No historical data available yet
-                        </p>
+                            <tbody>
+                              {historyData.data.map((v, index) => {
+                                const isCritical =
+                                  v.heartRate > 130 ||
+                                  v.oxygenSaturation < 90 ||
+                                  v.meanArterialPressure < 65;
+
+                                return (
+                                  <tr
+                                    key={index}
+                                    className={`border-t ${
+                                      isCritical
+                                        ? "bg-red-100 text-red-700 font-semibold"
+                                        : ""
+                                    }`}
+                                  >
+                                    <td className="p-2">
+                                      {new Date(v.recordedAt).toLocaleString()}
+                                    </td>
+                                    <td className="p-2 text-center">
+                                      {v.heartRate}
+                                    </td>
+                                    <td className="p-2 text-center">
+                                      {v.oxygenSaturation}
+                                    </td>
+                                    <td className="p-2 text-center">
+                                      {v.temperature}
+                                    </td>
+                                    <td className="p-2 text-center">
+                                      {v.meanArterialPressure}
+                                    </td>
+                                    <td className="p-2 text-center">
+                                      {v.respiratoryRate}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
                       </CardContent>
                     </Card>
-                  )}
+                  </div>
+                ) : (
+                  <Card className="border-border">
+                    <CardContent className="p-12 text-center">
+                      <Activity className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+                      <p className="text-muted-foreground">
+                        No historical data available yet
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
                 {/* </TabsContent> */}
               </TabsContent>
 

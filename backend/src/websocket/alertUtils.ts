@@ -19,7 +19,7 @@ export const triggerAlertIfAbnormal = async (patientId: string, vitals: VitalDat
   if (!patient) return;
 
   const message = `
-🚨 ALERT: Abnormal Vital Signs Detected for ${patient.name}
+  ALERT: Abnormal Vital Signs Detected for ${patient.name}
 
 Heart Rate: ${vitals.heartRate}
 Respiratory Rate: ${vitals.respiratoryRate}

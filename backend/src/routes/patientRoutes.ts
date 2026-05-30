@@ -2,9 +2,9 @@ import express from "express";
 import type { Request, Response } from "express";
 import authenticateToken from "../middleware/auth.js";
 import { PatientNote } from "../models/PatientNotes.js";
-import {z} from "zod";
+import { z } from "zod";
 import { Types } from "mongoose";
-import {Patient } from "../models/Patient.js";
+import { Patient } from "../models/Patient.js";
 import { DisPatient } from "../models/DischargetPatiend.js";
 import { User } from "../models/User.js";
 
@@ -20,7 +20,7 @@ type AccessResult =
 
 async function canAccessPatient(
   patientId: string,
-  user: any
+  user: any,
 ): Promise<AccessResult> {
   const patient = await Patient.findById(patientId)
     .select("assignedDoctors assignedNurses")
@@ -51,6 +51,14 @@ const patientSchema = z.object({
   name: z.string().min(3, "username must be at least 3 characters long"),
   age: z.number().min(0, "age must be a positive number"),
   gender: z.enum(["male", "female", "other"]),
+  weight: z
+    .number()
+    .min(1, "weight must be at least 1 kg")
+    .max(500, "weight cannot exceed 500 kg"),
+  height: z
+    .number()
+    .min(0.2, "height must be at least 0.5 m")
+    .max(3.8, "height cannot exceed 3 m"),
   assignedDoctors: z.array(z.string()).optional(),
   assignedNurses: z.array(z.string()).optional(),
   medicalHistory: z.array(z.string()).optional(),
@@ -68,431 +76,574 @@ const addHistorySchema = z.object({
   entry: z.string().min(1, "history entry required"),
 });
 
-patientRoute.post("/addPatient", authenticateToken, async (req: Request, res: Response) => {
-  const parsed = patientSchema.safeParse(req.body);
-  if (!parsed.success)
-    return res.status(400).json({ msg: "Validation failed", errors: parsed.error.issues });
+patientRoute.post(
+  "/addPatient",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    const parsed = patientSchema.safeParse(req.body);
+    if (!parsed.success)
+      return res
+        .status(400)
+        .json({ msg: "Validation failed", errors: parsed.error.issues });
 
-  try {
-    const patientData: any = {
-      ...parsed.data,
-      createdBy: req.user?._id,
-    };
+    try {
+      const patientData: any = {
+        ...parsed.data,
+        createdBy: req.user?._id,
+      };
 
-    if (req.user?.role === "doctor" || req.user?.role === "admin") {
-      patientData.assignedDoctors = [
-        ...(parsed.data.assignedDoctors || []),
-        req.user._id,
-      ];
-    } else if (req.user?.role === "nurse") {
-      patientData.assignedNurses = [
-        ...(parsed.data.assignedNurses || []),
-        req.user._id,
-      ];
+      if (req.user?.role === "doctor" || req.user?.role === "admin") {
+        patientData.assignedDoctors = [
+          ...(parsed.data.assignedDoctors || []),
+          req.user._id,
+        ];
+      } else if (req.user?.role === "nurse") {
+        patientData.assignedNurses = [
+          ...(parsed.data.assignedNurses || []),
+          req.user._id,
+        ];
+      }
+
+      const patient = await Patient.create(patientData);
+
+      const populated = await Patient.findById(patient._id)
+        .populate("createdBy", "name email role")
+        .populate("assignedDoctors", "name email role")
+        .populate("assignedNurses", "name email role")
+        .populate("previouslyAssignedDoctors", "name email role")
+        .populate("previouslyAssignedNurses", "name email role");
+
+      res
+        .status(201)
+        .json({ msg: "Patient created successfully", patient: populated });
+    } catch (e: any) {
+      res.status(500).json({ msg: "Server error", error: e.message });
     }
-
-    const patient = await Patient.create(patientData);
-
-    const populated = await Patient.findById(patient._id)
-      .populate("createdBy", "name email role")
-      .populate("assignedDoctors", "name email role")
-      .populate("assignedNurses", "name email role")
-      .populate("previouslyAssignedDoctors", "name email role")
-      .populate("previouslyAssignedNurses", "name email role");
-
-    res.status(201).json({ msg: "Patient created successfully", patient: populated });
-  } catch (e: any) {
-    res.status(500).json({ msg: "Server error", error: e.message });
-  }
-});
-
+  },
+);
 
 const assignDoctorsSchema = z.object({
-  doctors: z.array(z.string().refine((id) => Types.ObjectId.isValid(id), {
-    message: "Invalid doctor ID"
-  }))
+  doctors: z.array(
+    z.string().refine((id) => Types.ObjectId.isValid(id), {
+      message: "Invalid doctor ID",
+    }),
+  ),
 });
 
 const assignNursesSchema = z.object({
-  nurses: z.array(z.string().refine((id) => Types.ObjectId.isValid(id), {
-    message: "Invalid nurse ID"
-  }))
+  nurses: z.array(
+    z.string().refine((id) => Types.ObjectId.isValid(id), {
+      message: "Invalid nurse ID",
+    }),
+  ),
 });
 
-patientRoute.get("/allPatient", authenticateToken, async (req: Request, res: Response) => {
-  try {
-    if (!req.user) return res.status(401).json({ msg: "Unauthorized" });
+patientRoute.get(
+  "/allPatient",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ msg: "Unauthorized" });
 
-    const role = req.user.role;
-    const userId = req.user._id;
+      const role = req.user.role;
+      const userId = req.user._id;
 
-    const filter =
-      role === "admin"
-        ? {}
-        : {
-            $or: [{ assignedDoctors: userId }, { assignedNurses: userId }],
-          };
+      const filter =
+        role === "admin"
+          ? {}
+          : {
+              $or: [{ assignedDoctors: userId }, { assignedNurses: userId }],
+            };
 
-    const patient = await Patient.find(filter)
-      .populate("assignedDoctors", "name email role")
-      .populate("assignedNurses", "name email role")
-      .populate("previouslyAssignedDoctors", "name email role")
-      .populate("previouslyAssignedNurses", "name email role");
+      const patient = await Patient.find(filter)
+        .populate("assignedDoctors", "name email role")
+        .populate("assignedNurses", "name email role")
+        .populate("previouslyAssignedDoctors", "name email role")
+        .populate("previouslyAssignedNurses", "name email role");
 
-    return res.status(200).json({ patient });
-  } catch (e: any) {
-    return res.status(500).json({ msg: "Server error", error: e.message });
-  }
-});
+      return res.status(200).json({ patient });
+    } catch (e: any) {
+      return res.status(500).json({ msg: "Server error", error: e.message });
+    }
+  },
+);
 
-
-patientRoute.get("/getPatient/:id", authenticateToken, async(req: Request, res: Response)=>{
+patientRoute.get(
+  "/getPatient/:id",
+  authenticateToken,
+  async (req: Request, res: Response) => {
     const parsed = idParamSchema.safeParse(req.params);
     if (!parsed.success) {
-    return res.status(400).json({ msg: "Invalid ID", errors: parsed.error.issues });
+      return res
+        .status(400)
+        .json({ msg: "Invalid ID", errors: parsed.error.issues });
     }
-    
-    const {id} = parsed.data;
 
-    try{
-        const patient = await Patient.findById(id)
+    const { id } = parsed.data;
+
+    try {
+      const patient = await Patient.findById(id)
         .populate("assignedDoctors", "name email role")
         .populate("assignedNurses", "name, email role")
         .populate("previouslyAssignedDoctors", "name email role")
         .populate("previouslyAssignedNurses", "name email role");
 
-        if (!patient) return res.status(404).json({ msg: "Patient not found" });
+      if (!patient) return res.status(404).json({ msg: "Patient not found" });
 
-        const isAssigned =
-      patient.assignedDoctors.some((doc: any) => doc._id.toString() === req.user?._id) ||
-      patient.assignedNurses.some((nurse: any) => nurse._id.toString() === req.user?._id);
+      const isAssigned =
+        patient.assignedDoctors.some(
+          (doc: any) => doc._id.toString() === req.user?._id,
+        ) ||
+        patient.assignedNurses.some(
+          (nurse: any) => nurse._id.toString() === req.user?._id,
+        );
 
-    if (!isAssigned) return res.status(403).json({ msg: "Access denied" });
-        res.status(200).json(patient);
+      if (!isAssigned) return res.status(403).json({ msg: "Access denied" });
+      res.status(200).json(patient);
+    } catch (e: any) {
+      res.status(500).json({ msg: "Server error", error: e.message });
     }
-    catch (e: any) {
-    res.status(500).json({ msg: "Server error", error: e.message });
-    }
-})
+  },
+);
 
-patientRoute.put("/updatePatient/:id", authenticateToken, async(req: Request, res: Response)=>{
+patientRoute.put(
+  "/updatePatient/:id",
+  authenticateToken,
+  async (req: Request, res: Response) => {
     const idParsed = idParamSchema.safeParse(req.params);
-    if(!idParsed.success) return res.status(400).json({ msg: "Invalid ID", errors: idParsed.error.issues });
-    
+    if (!idParsed.success)
+      return res
+        .status(400)
+        .json({ msg: "Invalid ID", errors: idParsed.error.issues });
+
     const bodyParsed = updatePatientSchema.safeParse(req.body);
     if (!bodyParsed.success) {
-      return res.status(400).json({ msg: "Validation failed", errors: bodyParsed.error.issues });
+      return res
+        .status(400)
+        .json({ msg: "Validation failed", errors: bodyParsed.error.issues });
     }
 
-    const {id} = idParsed.data;
+    const { id } = idParsed.data;
 
-    try{
-        const patient = await Patient.findById(id);
-        if(!patient) return res.status(404).json({ msg: "Patient not found" });
+    try {
+      const patient = await Patient.findById(id);
+      if (!patient) return res.status(404).json({ msg: "Patient not found" });
 
-        const updated = await Patient.findByIdAndUpdate(id, bodyParsed.data, {new: true})
+      const updated = await Patient.findByIdAndUpdate(id, bodyParsed.data, {
+        new: true,
+      })
         .populate("assignedDoctors", "name email role")
         .populate("assignedNurses", "name email role")
         .populate("previouslyAssignedDoctors", "name email role")
         .populate("previouslyAssignedNurses", "name email role");
-        res.status(200).json({ msg: "Patient updated successfully", patient: updated });
+      res
+        .status(200)
+        .json({ msg: "Patient updated successfully", patient: updated });
+    } catch (e: any) {
+      res.status(500).json({ msg: "Server error", error: e.message });
     }
-    catch(e: any){
-        res.status(500).json({ msg: "Server error", error: e.message });
-    }
-})
+  },
+);
 
-patientRoute.delete("/deletePatient/:id", authenticateToken, async(req: Request, res: Response)=>{
+patientRoute.delete(
+  "/deletePatient/:id",
+  authenticateToken,
+  async (req: Request, res: Response) => {
     const parsed = idParamSchema.safeParse(req.params);
     if (!parsed.success) {
-      return res.status(400).json({ msg: "Invalid ID", errors: parsed.error.issues });
+      return res
+        .status(400)
+        .json({ msg: "Invalid ID", errors: parsed.error.issues });
     }
     const { id } = parsed.data;
 
-    try{
-        const patient = await Patient.findById(id);
-        if (!patient) return res.status(404).json({ msg: "Patient not found" });
-        await Patient.findByIdAndDelete(id);
+    try {
+      const patient = await Patient.findById(id);
+      if (!patient) return res.status(404).json({ msg: "Patient not found" });
+      await Patient.findByIdAndDelete(id);
 
-        await DisPatient.create(patient);
-        res.status(200).json({ msg: "Patient deleted successfully" });
+      await DisPatient.create(patient);
+      res.status(200).json({ msg: "Patient deleted successfully" });
+    } catch (e: any) {
+      res.status(500).json({ msg: "Server error", error: e.message });
     }
-    catch(e: any){
-        res.status(500).json({ msg: "Server error", error: e.message });
+  },
+);
+
+patientRoute.get(
+  "/allDoctor/:id",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    const parsed = idParamSchema.safeParse(req.params);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ msg: "Invalid ID", errors: parsed.error.issues });
     }
-})
 
-patientRoute.get("/allDoctor/:id", authenticateToken, async (req: Request, res: Response) => {
-  const parsed = idParamSchema.safeParse(req.params);
-  if (!parsed.success) {
-    return res.status(400).json({ msg: "Invalid ID", errors: parsed.error.issues });
-  }
+    const { id } = parsed.data;
 
-  const { id } = parsed.data;
+    try {
+      const patient = await Patient.findById(id).populate(
+        "assignedDoctors",
+        "_id",
+      );
+      if (!patient) return res.status(404).json({ msg: "Patient not found" });
 
-  try {
-    const patient = await Patient.findById(id).populate("assignedDoctors", "_id");
-    if (!patient) return res.status(404).json({ msg: "Patient not found" });
+      // collect assigned doctor IDs
+      const assignedDoctorIds = patient.assignedDoctors.map(
+        (doc: any) => doc._id,
+      );
 
-    // collect assigned doctor IDs
-    const assignedDoctorIds = patient.assignedDoctors.map((doc: any) => doc._id);
+      // fetch doctors not in assignedDoctorIds
+      const doctors = await User.find({
+        role: "doctor",
+        _id: { $nin: assignedDoctorIds },
+      }).select("name email role");
 
-    // fetch doctors not in assignedDoctorIds
-    const doctors = await User.find({
-      role: "doctor",
-      _id: { $nin: assignedDoctorIds },
-    }).select("name email role");
+      res.status(200).json({ doctors });
+    } catch (e: any) {
+      res.status(500).json({ msg: "Server error", error: e.message });
+    }
+  },
+);
 
-    res.status(200).json({ doctors });
-  } catch (e: any) {
-    res.status(500).json({ msg: "Server error", error: e.message });
-  }
-});
+patientRoute.get(
+  "/allNurse/:id",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    const parsed = idParamSchema.safeParse(req.params);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ msg: "Invalid ID", errors: parsed.error.issues });
+    }
 
-patientRoute.get("/allNurse/:id", authenticateToken, async (req: Request, res: Response) => {
-  const parsed = idParamSchema.safeParse(req.params);
-  if (!parsed.success) {
-    return res.status(400).json({ msg: "Invalid ID", errors: parsed.error.issues });
-  }
+    const { id } = parsed.data;
 
-  const { id } = parsed.data;
+    try {
+      const patient = await Patient.findById(id).populate(
+        "assignedNurses",
+        "_id",
+      );
+      if (!patient) return res.status(404).json({ msg: "Patient not found" });
 
-  try {
-    const patient = await Patient.findById(id).populate("assignedNurses", "_id");
-    if (!patient) return res.status(404).json({ msg: "Patient not found" });
+      // collect assigned nurse IDs
+      const assignedNurseIds = patient.assignedNurses.map(
+        (nurse: any) => nurse._id,
+      );
 
-    // collect assigned nurse IDs
-    const assignedNurseIds = patient.assignedNurses.map((nurse: any) => nurse._id);
+      // fetch nurses not in assignedNurseIds
+      const nurses = await User.find({
+        role: "nurse",
+        _id: { $nin: assignedNurseIds },
+      }).select("name email role");
 
-    // fetch nurses not in assignedNurseIds
-    const nurses = await User.find({
-      role: "nurse",
-      _id: { $nin: assignedNurseIds },
-    }).select("name email role");
+      res.status(200).json({ nurses });
+    } catch (e: any) {
+      res.status(500).json({ msg: "Server error", error: e.message });
+    }
+  },
+);
 
-    res.status(200).json({ nurses });
-  } catch (e: any) {
-    res.status(500).json({ msg: "Server error", error: e.message });
-  }
-});
+patientRoute.post(
+  "/assignDoctors/:id",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    const idParsed = idParamSchema.safeParse(req.params);
+    if (!idParsed.success) {
+      return res
+        .status(400)
+        .json({ msg: "Invalid patient ID", errors: idParsed.error.issues });
+    }
 
-patientRoute.post("/assignDoctors/:id", authenticateToken, async (req: Request, res: Response) => {
-  const idParsed = idParamSchema.safeParse(req.params);
-  if (!idParsed.success) {
-    return res.status(400).json({ msg: "Invalid patient ID", errors: idParsed.error.issues });
-  }
+    const bodyParsed = assignDoctorsSchema.safeParse(req.body);
+    if (!bodyParsed.success) {
+      return res
+        .status(400)
+        .json({ msg: "Validation failed", errors: bodyParsed.error.issues });
+    }
 
-  const bodyParsed = assignDoctorsSchema.safeParse(req.body);
-  if (!bodyParsed.success) {
-    return res.status(400).json({ msg: "Validation failed", errors: bodyParsed.error.issues });
-  }
+    const { id } = idParsed.data;
+    const { doctors } = bodyParsed.data;
 
-  const { id } = idParsed.data;
-  const { doctors } = bodyParsed.data;
+    try {
+      const patient = await Patient.findById(id);
+      if (!patient) return res.status(404).json({ msg: "Patient not found" });
 
-  try {
-    const patient = await Patient.findById(id);
-    if (!patient) return res.status(404).json({ msg: "Patient not found" });
+      // Convert to ObjectId and avoid duplicates
+      const uniqueDoctors = doctors
+        .map((docId) => new Types.ObjectId(docId))
+        .filter(
+          (objId) =>
+            !patient.assignedDoctors.some((assigned: any) =>
+              assigned.equals(objId),
+            ),
+        );
 
-    // Convert to ObjectId and avoid duplicates
-    const uniqueDoctors = doctors
-      .map(docId => new Types.ObjectId(docId))
-      .filter(objId => !patient.assignedDoctors.some((assigned: any) => assigned.equals(objId)));
+      patient.assignedDoctors.push(...uniqueDoctors);
+      await patient.save();
 
-    patient.assignedDoctors.push(...uniqueDoctors);
-    await patient.save();
+      const updated = await Patient.findById(id)
+        .populate("assignedDoctors", "name email role")
+        .populate("assignedNurses", "name email role")
+        .populate("previouslyAssignedDoctors", "name email role")
+        .populate("previouslyAssignedNurses", "name email role");
 
-    const updated = await Patient.findById(id)
-      .populate("assignedDoctors", "name email role")
-      .populate("assignedNurses", "name email role")
-      .populate("previouslyAssignedDoctors", "name email role")
-      .populate("previouslyAssignedNurses", "name email role");
-
-    res.status(200).json({ msg: "Doctors assigned successfully", patient: updated });
-  } catch (e: any) {
-    res.status(500).json({ msg: "Server error", error: e.message });
-  }
-});
+      res
+        .status(200)
+        .json({ msg: "Doctors assigned successfully", patient: updated });
+    } catch (e: any) {
+      res.status(500).json({ msg: "Server error", error: e.message });
+    }
+  },
+);
 
 // Assign nurses to patient
-patientRoute.post("/assignNurses/:id", authenticateToken, async (req: Request, res: Response) => {
-  const idParsed = idParamSchema.safeParse(req.params);
-  if (!idParsed.success) {
-    return res.status(400).json({ msg: "Invalid patient ID", errors: idParsed.error.issues });
-  }
+patientRoute.post(
+  "/assignNurses/:id",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    const idParsed = idParamSchema.safeParse(req.params);
+    if (!idParsed.success) {
+      return res
+        .status(400)
+        .json({ msg: "Invalid patient ID", errors: idParsed.error.issues });
+    }
 
-  const bodyParsed = assignNursesSchema.safeParse(req.body);
-  if (!bodyParsed.success) {
-    return res.status(400).json({ msg: "Validation failed", errors: bodyParsed.error.issues });
-  }
+    const bodyParsed = assignNursesSchema.safeParse(req.body);
+    if (!bodyParsed.success) {
+      return res
+        .status(400)
+        .json({ msg: "Validation failed", errors: bodyParsed.error.issues });
+    }
 
-  const { id } = idParsed.data;
-  const { nurses } = bodyParsed.data;
+    const { id } = idParsed.data;
+    const { nurses } = bodyParsed.data;
 
-  try {
-    const patient = await Patient.findById(id);
-    if (!patient) return res.status(404).json({ msg: "Patient not found" });
+    try {
+      const patient = await Patient.findById(id);
+      if (!patient) return res.status(404).json({ msg: "Patient not found" });
 
-    // Convert to ObjectId and avoid duplicates
-    const uniqueNurses = nurses
-      .map(nurseId => new Types.ObjectId(nurseId))
-      .filter(objId => !patient.assignedNurses.some((assigned: any) => assigned.equals(objId)));
+      // Convert to ObjectId and avoid duplicates
+      const uniqueNurses = nurses
+        .map((nurseId) => new Types.ObjectId(nurseId))
+        .filter(
+          (objId) =>
+            !patient.assignedNurses.some((assigned: any) =>
+              assigned.equals(objId),
+            ),
+        );
 
-    patient.assignedNurses.push(...uniqueNurses);
-    await patient.save();
+      patient.assignedNurses.push(...uniqueNurses);
+      await patient.save();
 
-    const updated = await Patient.findById(id)
-      .populate("assignedDoctors", "name email role")
-      .populate("assignedNurses", "name email role")
-      .populate("previouslyAssignedDoctors", "name email role")
-      .populate("previouslyAssignedNurses", "name email role");
+      const updated = await Patient.findById(id)
+        .populate("assignedDoctors", "name email role")
+        .populate("assignedNurses", "name email role")
+        .populate("previouslyAssignedDoctors", "name email role")
+        .populate("previouslyAssignedNurses", "name email role");
 
-    res.status(200).json({ msg: "Nurses assigned successfully", patient: updated });
-  } catch (e: any) {
-    res.status(500).json({ msg: "Server error", error: e.message });
-  }
-});
+      res
+        .status(200)
+        .json({ msg: "Nurses assigned successfully", patient: updated });
+    } catch (e: any) {
+      res.status(500).json({ msg: "Server error", error: e.message });
+    }
+  },
+);
 
-patientRoute.post("/:id/medicalHistory", authenticateToken, async (req, res) => {
-  // console.log("decoded user:", req.user);
-  const idParsed = idParamSchema.safeParse(req.params);
-  if (!idParsed.success) return res.status(400).json({ msg: "Invalid ID", errors: idParsed.error.issues });
+patientRoute.post(
+  "/:id/medicalHistory",
+  authenticateToken,
+  async (req, res) => {
+    // console.log("decoded user:", req.user);
+    const idParsed = idParamSchema.safeParse(req.params);
+    if (!idParsed.success)
+      return res
+        .status(400)
+        .json({ msg: "Invalid ID", errors: idParsed.error.issues });
 
-  const bodyParsed = addHistorySchema.safeParse(req.body);
-  if (!bodyParsed.success) return res.status(400).json({ msg: "Validation failed", errors: bodyParsed.error.issues });
+    const bodyParsed = addHistorySchema.safeParse(req.body);
+    if (!bodyParsed.success)
+      return res
+        .status(400)
+        .json({ msg: "Validation failed", errors: bodyParsed.error.issues });
 
-  const { id } = idParsed.data;
-  const { entry } = bodyParsed.data;
+    const { id } = idParsed.data;
+    const { entry } = bodyParsed.data;
 
-  try {
-    const patient = await Patient.findById(id);
-    if (!patient) return res.status(404).json({ msg: "Patient not found" });
+    try {
+      const patient = await Patient.findById(id);
+      if (!patient) return res.status(404).json({ msg: "Patient not found" });
 
-    const role = req.user?.role;
-    const userId = req.user?._id;
+      const role = req.user?.role;
+      const userId = req.user?._id;
 
-    const allowed =
-      role === "admin" ||
-      (role === "doctor" && patient.assignedDoctors.some((d: any) => d.toString() === userId)) ||
-      (role === "nurse" && patient.assignedNurses.some((n: any) => n.toString() === userId));
+      const allowed =
+        role === "admin" ||
+        (role === "doctor" &&
+          patient.assignedDoctors.some((d: any) => d.toString() === userId)) ||
+        (role === "nurse" &&
+          patient.assignedNurses.some((n: any) => n.toString() === userId));
 
-    if (!allowed) return res.status(403).json({ msg: "Not authorized" });
+      if (!allowed) return res.status(403).json({ msg: "Not authorized" });
 
-    patient.medicalHistory = patient.medicalHistory || [];
-    patient.medicalHistory.push(entry);
-    await patient.save();
+      patient.medicalHistory = patient.medicalHistory || [];
+      patient.medicalHistory.push(entry);
+      await patient.save();
 
-    return res.status(200).json({
-      msg: "Medical history added",
-      medicalHistory: patient.medicalHistory,
-    });
-  } catch (e: any) {
-    return res.status(500).json({ msg: "Server error", error: e.message });
-  }
-});
+      return res.status(200).json({
+        msg: "Medical history added",
+        medicalHistory: patient.medicalHistory,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ msg: "Server error", error: e.message });
+    }
+  },
+);
 
-patientRoute.get("/:id/getMedicalHistory", authenticateToken, async (req, res) => {
-  const idParsed = idParamSchema.safeParse(req.params);
-  if (!idParsed.success) return res.status(400).json({ msg: "Invalid ID", errors: idParsed.error.issues });
+patientRoute.get(
+  "/:id/getMedicalHistory",
+  authenticateToken,
+  async (req, res) => {
+    const idParsed = idParamSchema.safeParse(req.params);
+    if (!idParsed.success)
+      return res
+        .status(400)
+        .json({ msg: "Invalid ID", errors: idParsed.error.issues });
 
-  const { id } = idParsed.data;
+    const { id } = idParsed.data;
 
-  try {
-    const patient = await Patient.findById(id);
-    if (!patient) return res.status(404).json({ msg: "Patient not found" });
+    try {
+      const patient = await Patient.findById(id);
+      if (!patient) return res.status(404).json({ msg: "Patient not found" });
 
-    const role = req.user?.role;
-    const userId = req.user?._id?.toString();
+      const role = req.user?.role;
+      const userId = req.user?._id?.toString();
 
-    const allowed =
-      role === "admin" ||
-      (role === "doctor" && patient.assignedDoctors.some((d: any) => d.toString() === userId)) ||
-      (role === "nurse" && patient.assignedNurses.some((n: any) => n.toString() === userId));
+      const allowed =
+        role === "admin" ||
+        (role === "doctor" &&
+          patient.assignedDoctors.some((d: any) => d.toString() === userId)) ||
+        (role === "nurse" &&
+          patient.assignedNurses.some((n: any) => n.toString() === userId));
 
-    if (!allowed) return res.status(403).json({ msg: "Not authorized" });
+      if (!allowed) return res.status(403).json({ msg: "Not authorized" });
 
-    return res.status(200).json({
-      medicalHistory: patient.medicalHistory || [],
-    });
-  } catch (e: any) {
-    return res.status(500).json({ msg: "Server error", error: e.message });
-  }
-});
+      return res.status(200).json({
+        medicalHistory: patient.medicalHistory || [],
+      });
+    } catch (e: any) {
+      return res.status(500).json({ msg: "Server error", error: e.message });
+    }
+  },
+);
 
+patientRoute.get(
+  "/:id/notes",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    const idParsed = idParamSchema.safeParse(req.params);
+    if (!idParsed.success)
+      return res
+        .status(400)
+        .json({ msg: "Invalid ID", errors: idParsed.error.issues });
 
-patientRoute.get("/:id/notes", authenticateToken, async (req: Request, res: Response) => {
-  const idParsed = idParamSchema.safeParse(req.params);
-  if (!idParsed.success) return res.status(400).json({ msg: "Invalid ID", errors: idParsed.error.issues });
+    const { id } = idParsed.data;
 
-  const { id } = idParsed.data;
+    try {
+      const access = await canAccessPatient(id, req.user);
+      if (!access.ok)
+        return res.status(access.status).json({ msg: access.msg });
 
-  try {
-    const access = await canAccessPatient(id, req.user);
-    if (!access.ok) return res.status(access.status).json({ msg: access.msg });
+      const notes = await PatientNote.find({ patient: id })
+        .populate("author", "name email role")
+        .sort({ createdAt: -1 })
+        .lean();
 
-    const notes = await PatientNote.find({ patient: id })
-      .populate("author", "name email role")
-      .sort({ createdAt: -1 })
-      .lean();
+      return res.status(200).json({ notes });
+    } catch (e: any) {
+      return res.status(500).json({ msg: "Server error", error: e.message });
+    }
+  },
+);
 
-    return res.status(200).json({ notes });
-  } catch (e: any) {
-    return res.status(500).json({ msg: "Server error", error: e.message });
-  }
-});
+patientRoute.post(
+  "/:id/notes",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    const idParsed = idParamSchema.safeParse(req.params);
+    if (!idParsed.success)
+      return res
+        .status(400)
+        .json({ msg: "Invalid ID", errors: idParsed.error.issues });
 
-patientRoute.post("/:id/notes", authenticateToken, async (req: Request, res: Response) => {
-  const idParsed = idParamSchema.safeParse(req.params);
-  if (!idParsed.success) return res.status(400).json({ msg: "Invalid ID", errors: idParsed.error.issues });
+    const bodyParsed = noteSchema.safeParse(req.body);
+    if (!bodyParsed.success)
+      return res
+        .status(400)
+        .json({ msg: "Validation failed", errors: bodyParsed.error.issues });
 
-  const bodyParsed = noteSchema.safeParse(req.body);
-  if (!bodyParsed.success) return res.status(400).json({ msg: "Validation failed", errors: bodyParsed.error.issues });
+    const { id } = idParsed.data;
+    const { text } = bodyParsed.data;
 
-  const { id } = idParsed.data;
-  const { text } = bodyParsed.data;
+    try {
+      const access = await canAccessPatient(id, req.user);
+      if (!access.ok)
+        return res.status(access.status).json({ msg: access.msg });
 
-  try {
-    const access = await canAccessPatient(id, req.user);
-    if (!access.ok) return res.status(access.status).json({ msg: access.msg });
+      const note = await PatientNote.create({
+        patient: new Types.ObjectId(id),
+        author: new Types.ObjectId(req.user!._id),
+        text,
+      });
 
-    const note = await PatientNote.create({
-      patient: new Types.ObjectId(id),
-      author: new Types.ObjectId(req.user!._id),
-      text,
-    });
+      const populated = await PatientNote.findById(note._id)
+        .populate("author", "name email role")
+        .lean();
 
-    const populated = await PatientNote.findById(note._id)
-      .populate("author", "name email role")
-      .lean();
-
-    return res.status(201).json({ note: populated });
-  } catch (e: any) {
-    return res.status(500).json({ msg: "Server error", error: e.message });
-  }
-});
+      return res.status(201).json({ note: populated });
+    } catch (e: any) {
+      return res.status(500).json({ msg: "Server error", error: e.message });
+    }
+  },
+);
 
 const noteIdParamSchema = z.object({
-  id: z.string().refine((v) => Types.ObjectId.isValid(v), { message: "Invalid patient ID" }),
-  noteId: z.string().refine((v) => Types.ObjectId.isValid(v), { message: "Invalid note ID" }),
+  id: z.string().refine((v) => Types.ObjectId.isValid(v), {
+    message: "Invalid patient ID",
+  }),
+  noteId: z
+    .string()
+    .refine((v) => Types.ObjectId.isValid(v), { message: "Invalid note ID" }),
 });
 
-patientRoute.delete("/:id/notes/:noteId", authenticateToken, async (req: Request, res: Response) => {
-  const parsed = noteIdParamSchema.safeParse(req.params);
-  if (!parsed.success) return res.status(400).json({ msg: "Invalid params", errors: parsed.error.issues });
+patientRoute.delete(
+  "/:id/notes/:noteId",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    const parsed = noteIdParamSchema.safeParse(req.params);
+    if (!parsed.success)
+      return res
+        .status(400)
+        .json({ msg: "Invalid params", errors: parsed.error.issues });
 
-  const { id, noteId } = parsed.data;
+    const { id, noteId } = parsed.data;
 
-  try {
-    const access = await canAccessPatient(id, req.user);
-    if (!access.ok) return res.status(access.status).json({ msg: access.msg });
+    try {
+      const access = await canAccessPatient(id, req.user);
+      if (!access.ok)
+        return res.status(access.status).json({ msg: access.msg });
 
-    const deleted = await PatientNote.findByIdAndDelete(noteId);
-    if (!deleted) return res.status(404).json({ msg: "Note not found" });
+      const deleted = await PatientNote.findByIdAndDelete(noteId);
+      if (!deleted) return res.status(404).json({ msg: "Note not found" });
 
-    return res.status(200).json({ msg: "Note deleted successfully" });
-  } catch (e: any) {
-    return res.status(500).json({ msg: "Server error", error: e.message });
-  }
-});
+      return res.status(200).json({ msg: "Note deleted successfully" });
+    } catch (e: any) {
+      return res.status(500).json({ msg: "Server error", error: e.message });
+    }
+  },
+);
 
 export default patientRoute;

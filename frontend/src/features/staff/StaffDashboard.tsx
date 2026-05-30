@@ -1,59 +1,83 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import DashboardLayout from '@/components/DashboardLayout';
-import { patientApi } from '@/services/api';
-import { AddPatientRequest, Patient } from '@/types';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Skeleton } from '@/components/ui/skeleton';
-import { 
-  Activity, 
-  Users, 
-  User, 
-  Stethoscope, 
-  Plus, 
+import React, { useState } from "react";
+import { Link } from "react-router-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import DashboardLayout from "@/components/DashboardLayout";
+import { patientApi } from "@/services/api";
+import { AddPatientRequest, Patient } from "@/types";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Activity,
+  Users,
+  User,
+  Stethoscope,
+  Plus,
   Search,
   AlertCircle,
   ArrowRight,
-  UserCheck
-} from 'lucide-react';
-import { cn } from '@/lib/utils';
+  UserCheck,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const StaffDashboard: React.FC = () => {
   const queryClient = useQueryClient();
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState("");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  
+
   // Add patient form state
   const [newPatient, setNewPatient] = useState<AddPatientRequest>({
-    name: '',
+    name: "",
     age: 0,
-    gender: 'male',
-    machineKey: '',
+    gender: "male",
+    machineKey: "",
+    weight: 0,
+    height: 0,
     medicalHistory: [],
   });
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['patients'],
+    queryKey: ["patients"],
     queryFn: patientApi.getAllPatients,
   });
 
   const addPatientMutation = useMutation({
     mutationFn: patientApi.addPatient,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['patients'] });
+      queryClient.invalidateQueries({ queryKey: ["patients"] });
       setIsAddDialogOpen(false);
       setNewPatient({
-        name: '',
+        name: "",
         age: 0,
-        gender: 'male',
-        machineKey: '',
+        gender: "male",
+        weight: 0,
+        height: 0,
+        machineKey: "",
         medicalHistory: [],
       });
     },
@@ -64,12 +88,13 @@ const StaffDashboard: React.FC = () => {
     addPatientMutation.mutate(newPatient);
   };
 
-  const filteredPatients = data?.patient?.filter((patient) =>
-    patient.name.toLowerCase().includes(searchQuery.toLowerCase())
-  ) || [];
+  const filteredPatients =
+    data?.patient?.filter((patient) =>
+      patient.name.toLowerCase().includes(searchQuery.toLowerCase()),
+    ) || [];
 
   const handlePatientClick = (patientId: string) => {
-    localStorage.setItem('last_patient_id', patientId);
+    localStorage.setItem("last_patient_id", patientId);
   };
 
   return (
@@ -78,12 +103,14 @@ const StaffDashboard: React.FC = () => {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
           <div>
-            <h1 className="text-3xl font-bold text-foreground">Patient Dashboard</h1>
+            <h1 className="text-3xl font-bold text-foreground">
+              Patient Dashboard
+            </h1>
             <p className="text-muted-foreground mt-1">
               Monitor and manage patient vital signs
             </p>
           </div>
-          
+
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2">
@@ -106,11 +133,13 @@ const StaffDashboard: React.FC = () => {
                       id="patient-name"
                       placeholder="John Doe"
                       value={newPatient.name}
-                      onChange={(e) => setNewPatient({ ...newPatient, name: e.target.value })}
+                      onChange={(e) =>
+                        setNewPatient({ ...newPatient, name: e.target.value })
+                      }
                       required
                     />
                   </div>
-                  
+
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="patient-age">Age</Label>
@@ -119,16 +148,26 @@ const StaffDashboard: React.FC = () => {
                         type="number"
                         min="0"
                         max="150"
-                        value={newPatient.age}
-                        onChange={(e) => setNewPatient({ ...newPatient, age: parseInt(e.target.value) || 0 })}
+                        step="1"
+                        value={newPatient.age === 0 ? "" : newPatient.age}
+                        onChange={(e) => {
+                          const value = Number(e.target.value);
+
+                          if (value >= 0) {
+                            setNewPatient({
+                              ...newPatient,
+                              age: value,
+                            });
+                          }
+                        }}
                         required
                       />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="patient-gender">Gender</Label>
-                      <Select 
-                        value={newPatient.gender} 
-                        onValueChange={(value: 'male' | 'female' | 'other') => 
+                      <Select
+                        value={newPatient.gender}
+                        onValueChange={(value: "male" | "female" | "other") =>
                           setNewPatient({ ...newPatient, gender: value })
                         }
                       >
@@ -143,14 +182,65 @@ const StaffDashboard: React.FC = () => {
                       </Select>
                     </div>
                   </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="patient-weight">Weight (kg)</Label>
+                      <Input
+                        id="patient-weight"
+                        type="number"
+                        min="1"
+                        max="500"
+                        step="0.1"
+                        value={newPatient.weight == 0 ? "" : newPatient.weight}
+                        onChange={(e) => {
+                          const value = Number(e.target.value);
 
+                          if (value >= 0) {
+                            setNewPatient({
+                              ...newPatient,
+                              weight: value,
+                            });
+                          }
+                        }}
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="patient-height">Height (m)</Label>
+                      <Input
+                        id="patient-height"
+                        type="number"
+                        min="0.2"
+                        max="3.8"
+                        step="0.01"
+                        value={newPatient.height === 0 ? "" : newPatient.height}
+                        onChange={(e) => {
+                          const value = Number(e.target.value);
+
+                          if (value >= 0) {
+                            setNewPatient({
+                              ...newPatient,
+                              height: value,
+                            });
+                          }
+                        }}
+                        required
+                      />
+                    </div>
+                  </div>
                   <div className="space-y-2">
                     <Label htmlFor="machine-key">Machine Key</Label>
                     <Input
                       id="machine-key"
                       placeholder="MONITOR-001"
                       value={newPatient.machineKey}
-                      onChange={(e) => setNewPatient({ ...newPatient, machineKey: e.target.value })}
+                      onChange={(e) =>
+                        setNewPatient({
+                          ...newPatient,
+                          machineKey: e.target.value,
+                        })
+                      }
                       required
                     />
                     <p className="text-xs text-muted-foreground">
@@ -159,11 +249,15 @@ const StaffDashboard: React.FC = () => {
                   </div>
                 </div>
                 <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setIsAddDialogOpen(false)}
+                  >
                     Cancel
                   </Button>
                   <Button type="submit" disabled={addPatientMutation.isPending}>
-                    {addPatientMutation.isPending ? 'Adding...' : 'Add Patient'}
+                    {addPatientMutation.isPending ? "Adding..." : "Add Patient"}
                   </Button>
                 </DialogFooter>
               </form>
@@ -191,11 +285,13 @@ const StaffDashboard: React.FC = () => {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Total Patients</p>
-                <p className="text-2xl font-bold">{data?.patient?.length || 0}</p>
+                <p className="text-2xl font-bold">
+                  {data?.patient?.length || 0}
+                </p>
               </div>
             </CardContent>
           </Card>
-          
+
           <Card className="border-border">
             <CardContent className="p-4 flex items-center gap-3">
               <div className="p-2 bg-success/10 rounded-lg">
@@ -203,7 +299,9 @@ const StaffDashboard: React.FC = () => {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Active Monitors</p>
-                <p className="text-2xl font-bold">{data?.patient?.length || 0}</p>
+                <p className="text-2xl font-bold">
+                  {data?.patient?.length || 0}
+                </p>
               </div>
             </CardContent>
           </Card>
@@ -216,7 +314,13 @@ const StaffDashboard: React.FC = () => {
               <div>
                 <p className="text-sm text-muted-foreground">Doctors</p>
                 <p className="text-2xl font-bold">
-                  {new Set(data?.patient?.flatMap(p => p.assignedDoctors?.map(d => d._id)) || []).size}
+                  {
+                    new Set(
+                      data?.patient?.flatMap((p) =>
+                        p.assignedDoctors?.map((d) => d._id),
+                      ) || [],
+                    ).size
+                  }
                 </p>
               </div>
             </CardContent>
@@ -230,7 +334,13 @@ const StaffDashboard: React.FC = () => {
               <div>
                 <p className="text-sm text-muted-foreground">Nurses</p>
                 <p className="text-2xl font-bold">
-                  {new Set(data?.patient?.flatMap(p => p.assignedNurses?.map(n => n._id)) || []).size}
+                  {
+                    new Set(
+                      data?.patient?.flatMap((p) =>
+                        p.assignedNurses?.map((n) => n._id),
+                      ) || [],
+                    ).size
+                  }
                 </p>
               </div>
             </CardContent>
@@ -256,8 +366,12 @@ const StaffDashboard: React.FC = () => {
           <Card className="border-destructive/50 bg-destructive/5">
             <CardContent className="p-8 flex flex-col items-center justify-center text-center">
               <AlertCircle className="h-12 w-12 text-destructive mb-4" />
-              <h3 className="text-lg font-semibold text-foreground">Failed to Load Patients</h3>
-              <p className="text-muted-foreground mt-1">Please check your connection and try again.</p>
+              <h3 className="text-lg font-semibold text-foreground">
+                Failed to Load Patients
+              </h3>
+              <p className="text-muted-foreground mt-1">
+                Please check your connection and try again.
+              </p>
             </CardContent>
           </Card>
         ) : filteredPatients.length === 0 ? (
@@ -265,21 +379,21 @@ const StaffDashboard: React.FC = () => {
             <CardContent className="p-12 flex flex-col items-center justify-center text-center">
               <User className="h-16 w-16 text-muted-foreground/50 mb-4" />
               <h3 className="text-lg font-semibold text-foreground">
-                {searchQuery ? 'No patients found' : 'No patients yet'}
+                {searchQuery ? "No patients found" : "No patients yet"}
               </h3>
               <p className="text-muted-foreground mt-1 max-w-md">
-                {searchQuery 
-                  ? 'Try a different search term' 
-                  : 'Add your first patient to start monitoring vital signs'}
+                {searchQuery
+                  ? "Try a different search term"
+                  : "Add your first patient to start monitoring vital signs"}
               </p>
             </CardContent>
           </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredPatients.map((patient) => (
-              <PatientCard 
-                key={patient._id} 
-                patient={patient} 
+              <PatientCard
+                key={patient._id}
+                patient={patient}
                 onClick={() => handlePatientClick(patient._id)}
               />
             ))}
@@ -315,7 +429,10 @@ const PatientCard: React.FC<PatientCardProps> = ({ patient, onClick }) => {
                 </CardDescription>
               </div>
             </div>
-            <Badge variant="outline" className="bg-success/10 text-success border-success/20">
+            <Badge
+              variant="outline"
+              className="bg-success/10 text-success border-success/20"
+            >
               <Activity className="h-3 w-3 mr-1" />
               Active
             </Badge>

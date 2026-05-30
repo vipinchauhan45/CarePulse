@@ -12,12 +12,14 @@ import type {
   VitalData,
   AlertPayload,
   RecoveryPayload,
+  MLPayload,
 } from "./payload.interface.js";
 
 import { getAlertTypes, getSeverity } from "./alertRules.js";
 import { CooldownTracker } from "./cooldown.js";
 import { AssignmentCache } from "./assignmentCache.js";
 import { sendAlertEmail } from "./sendAlertEmail.js";
+import { calculateHRVFromBase64 } from "../utils/calculateHRV.js";
 
 dotenv.config();
 
@@ -47,10 +49,49 @@ export class RoomManager {
   private emailCooldown = new CooldownTracker(15 * 60_000);
 
   private assignmentCache = new AssignmentCache(120_000);
+  private patientMLCache: Map<
+    string,
+    {
+      name: string;
+      age: number;
+      gender: "male" | "female" | "other";
+      weight: number;
+      height: number;
+    }
+  > = new Map();
+
+  private mlRiskState: Map<string, "low" | "high"> = new Map();
+  private mlEmailedDoctors: Map<string, Set<string>> = new Map();
 
   constructor() {
     console.log("[WS] RoomManager initialized. Buffer save interval: 5 min");
     setInterval(() => this.saveBufferedVitals(), 5 * 60 * 1000);
+  }
+
+  private async getPatientMLData(patientId: string) {
+    const cached = this.patientMLCache.get(patientId);
+
+    if (cached) {
+      return cached;
+    }
+
+    const patient = await Patient.findById(patientId)
+      .select("name age gender weight height")
+      .lean();
+
+    if (!patient) return null;
+
+    const patientData = {
+      name: patient.name,
+      age: patient.age,
+      gender: patient.gender,
+      weight: patient.weight,
+      height: patient.height,
+    };
+
+    this.patientMLCache.set(patientId, patientData);
+
+    return patientData;
   }
 
   public handleConnection(ws: WebSocket) {
@@ -292,6 +333,81 @@ export class RoomManager {
     }
   }
 
+  private async sendToMLModel(patientId: string, vitals: VitalData) {
+    try {
+      const patient = await this.getPatientMLData(patientId);
+
+      if (!patient) {
+        console.log("[ML] patient not found:", patientId);
+        return;
+      }
+
+      const [systolicRaw, diastolicRaw] = vitals.bloodPressure.split("/");
+
+      const systolic = Number(systolicRaw);
+      const diastolic = Number(diastolicRaw);
+
+      if (
+        systolicRaw === undefined ||
+        diastolicRaw === undefined ||
+        Number.isNaN(systolic) ||
+        Number.isNaN(diastolic)
+      ) {
+        console.log("[ML] Invalid blood pressure:", vitals.bloodPressure);
+        return;
+      }
+
+      const genderValue =
+        patient.gender === "male" ? 1 : patient.gender === "female" ? 0 : 2;
+
+      const derivedHRV = calculateHRVFromBase64(vitals.ecgWaveform);
+
+      const mlPayload: MLPayload = {
+        "Heart Rate": vitals.heartRate,
+        "Respiratory Rate": vitals.respiratoryRate,
+        "Body Temperature": vitals.temperature,
+        "Oxygen Saturation": vitals.oxygenSaturation,
+        "Systolic Blood Pressure": systolic,
+        "Diastolic Blood Pressure": diastolic,
+        Age: patient.age,
+        Gender: genderValue,
+        "Weight (kg)": patient.weight,
+        "Height (m)": patient.height,
+        Derived_HRV: derivedHRV,
+        Derived_Pulse_Pressure: systolic - diastolic,
+        Derived_BMI: Number(
+          (patient.weight / (patient.height * patient.height)).toFixed(2),
+        ),
+        Derived_MAP: vitals.meanArterialPressure,
+      };
+
+      const response = await fetch("http://127.0.0.1:5000/predict", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(mlPayload),
+      });
+
+      const result = await response.json();
+
+      console.log("[ML PAYLOAD]", mlPayload);
+
+      console.log("[ML RESULT]");
+      console.log("Prediction:", result.prediction);
+      console.log("Risk Level:", result.risk_level);
+      console.log(
+        "High Risk Probability:",
+        `${(result.high_risk_probability * 100).toFixed(2)}%`,
+      );
+      
+      return result;
+    } catch (error) {
+      console.error("[ML ERROR]", error);
+      return null;
+    }
+  }
+
   private async handleMachineMessage(ws: WebSocket, msg: WebSocketPayload) {
     if (msg.type !== "message") return;
 
@@ -304,6 +420,7 @@ export class RoomManager {
       spo2: vitals.oxygenSaturation,
       map: vitals.meanArterialPressure,
       temp: vitals.temperature,
+      ecg: vitals.ecgWaveform,
     });
 
     const room = this.rooms.get(machineKey);
@@ -321,9 +438,126 @@ export class RoomManager {
     if (!this.vitalsBuffer.has(patientId)) this.vitalsBuffer.set(patientId, []);
     this.vitalsBuffer.get(patientId)!.push(vitals);
 
+    this.sendToMLModel(patientId, vitals)
+      .then(async (mlResult) => {
+        if (mlResult) {
+          await this.handleMLRiskEmailing(patientId, vitals, mlResult);
+        }
+      })
+      .catch((err) => {
+        console.error("[ML ERROR]", err);
+      });
+
     this.handleAlerting(patientId, vitals).catch((err) => {
       console.error("[ALERT ERROR]", err);
     });
+  }
+
+  private async handleMLRiskEmailing(
+    patientId: string,
+    vitals: VitalData,
+    mlResult: any,
+  ) {
+    const riskLevel = String(mlResult.risk_level).toLowerCase();
+    const highRiskProbability = Number(mlResult.high_risk_probability);
+
+    const nextState = riskLevel === "high" ? "high" : "low";
+    const prevState = this.mlRiskState.get(patientId) ?? "low";
+
+    console.log(
+      "[ML ALERT]",
+      "patient:",
+      patientId,
+      "prev:",
+      prevState,
+      "next:",
+      nextState,
+      "probability:",
+      `${(highRiskProbability * 100).toFixed(2)}%`,
+    );
+
+    if (prevState === "low" && nextState === "high") {
+      this.mlRiskState.set(patientId, "high");
+      this.mlEmailedDoctors.set(patientId, new Set());
+
+      await this.sendMLRiskEmailToAssignedDoctors(patientId, vitals, mlResult);
+      return;
+    }
+
+    if (prevState === "high" && nextState === "low") {
+      this.mlRiskState.set(patientId, "low");
+      this.mlEmailedDoctors.delete(patientId);
+      console.log("[ML ALERT] patient recovered to low, no email sent");
+    }
+  }
+
+  private async sendMLRiskEmailToAssignedDoctors(
+    patientId: string,
+    vitals: VitalData,
+    mlResult: any,
+  ) {
+    const patient = await Patient.findById(patientId)
+      .populate("assignedDoctors", "email name")
+      .select("name assignedDoctors")
+      .exec();
+
+    if (!patient) {
+      console.log("[ML EMAIL] patient not found:", patientId);
+      return;
+    }
+
+    const emailedSet =
+      this.mlEmailedDoctors.get(patientId) ?? new Set<string>();
+
+    const doctors = (patient.assignedDoctors as any[]).filter(
+      (doctor) => doctor.email && !emailedSet.has(doctor.email),
+    );
+
+    if (!doctors.length) {
+      console.log("[ML EMAIL] no new doctors to email");
+      return;
+    }
+
+    const probability = `${(Number(mlResult.high_risk_probability) * 100).toFixed(2)}%`;
+
+    const subject = `ML High Risk Alert for ${patient.name}`;
+
+    const message = `
+ML HIGH RISK ALERT
+
+Patient: ${patient.name}
+
+Prediction: ${mlResult.prediction}
+Risk Level: ${mlResult.risk_level}
+High Risk Probability: ${probability}
+
+Current Vitals:
+
+Heart Rate: ${vitals.heartRate}
+Respiratory Rate: ${vitals.respiratoryRate}
+Blood Pressure: ${vitals.bloodPressure}
+Mean Arterial Pressure: ${vitals.meanArterialPressure}
+Oxygen Saturation: ${vitals.oxygenSaturation}
+Temperature: ${vitals.temperature}
+End Tidal CO₂: ${vitals.endTidalCO2}
+FiO₂: ${vitals.fiO2}
+Tidal Volume: ${vitals.tidalVolume}
+Central Venous Pressure: ${vitals.centralVenousPressure}
+
+Please check the patient dashboard immediately.
+`.trim();
+
+    for (const doctor of doctors) {
+      try {
+        await sendAlertEmail(doctor.email, subject, message);
+        emailedSet.add(doctor.email);
+        console.log("[ML EMAIL] sent to doctor:", doctor.email);
+      } catch (err) {
+        console.error("[ML EMAIL] failed for doctor:", doctor.email, err);
+      }
+    }
+
+    this.mlEmailedDoctors.set(patientId, emailedSet);
   }
 
   private async handleAlerting(patientId: string, vitals: VitalData) {
@@ -389,7 +623,6 @@ export class RoomManager {
     console.log("[COOLDOWN] canSendUI:", canSendUI, "keys:", uiKeys);
     console.log("[COOLDOWN] canSendEmail:", canSendEmail, "keys:", emailKeys);
 
-
     let newAlert;
 
     try {
@@ -410,8 +643,6 @@ export class RoomManager {
       }
       throw err;
     }
-
-    //  THEN CONTINUE YOUR EXISTING LOGIC
 
     const payload: AlertPayload = {
       type: "alert",

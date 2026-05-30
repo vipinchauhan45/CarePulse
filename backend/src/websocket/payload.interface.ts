@@ -84,3 +84,20 @@ export interface RecoveryPayload {
   patientName: string;
   createdAt: string;
 }
+
+export interface MLPayload {
+  "Heart Rate": number;
+  "Respiratory Rate": number;
+  "Body Temperature": number;
+  "Oxygen Saturation": number;
+  "Systolic Blood Pressure": number;
+  "Diastolic Blood Pressure": number;
+  Age: number;
+  Gender: number;
+  "Weight (kg)": number;
+  "Height (m)": number;
+  Derived_HRV: number;
+  Derived_Pulse_Pressure: number;
+  Derived_BMI: number;
+  Derived_MAP: number;
+}

@@ -60,6 +60,8 @@ export interface AddPatientRequest {
   name: string;
   age: number;
   gender: 'male' | 'female' | 'other';
+  weight: number;
+  height: number;
   medicalHistory?: string[];
   machineKey: string;
 }
