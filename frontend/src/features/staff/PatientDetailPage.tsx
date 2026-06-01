@@ -461,6 +461,52 @@ const PatientDetailPage: React.FC = () => {
                 color="respiratory"
                 isLive={isConnected && !isPaused}
               />
+              <VitalCard
+                label="Blood Pressure"
+                value={liveVitals?.bloodPressure ?? "--"}
+                unit="mmHg"
+                icon={Activity}
+                color="pressure"
+                isLive={isConnected && !isPaused}
+              />
+
+              <VitalCard
+                label="EtCO₂"
+                value={liveVitals?.endTidalCO2 ?? "--"}
+                unit="mmHg"
+                icon={Wind}
+                color="respiratory"
+                isLive={isConnected && !isPaused}
+              />
+
+              <VitalCard
+                label="FiO₂"
+                value={
+                  liveVitals?.fiO2 ? (liveVitals.fiO2 * 100).toFixed(0) : "--"
+                }
+                unit="%"
+                icon={Droplets}
+                color="oxygen"
+                isLive={isConnected && !isPaused}
+              />
+
+              <VitalCard
+                label="Tidal Volume"
+                value={liveVitals?.tidalVolume ?? "--"}
+                unit="mL"
+                icon={Activity}
+                color="heart"
+                isLive={isConnected && !isPaused}
+              />
+
+              <VitalCard
+                label="CVP"
+                value={liveVitals?.centralVenousPressure ?? "--"}
+                unit="mmHg"
+                icon={Gauge}
+                color="pressure"
+                isLive={isConnected && !isPaused}
+              />
             </div>
 
             {/* Blood Pressure Card */}
@@ -640,7 +686,7 @@ const PatientDetailPage: React.FC = () => {
                           Vitals History Table
                         </h3>
 
-                        <div className="max-h-[400px] overflow-y-auto border rounded-md">
+                        <div className="max-h-[400px] overflow-y-auto overflow-x-auto border rounded-md">
                           <table className="w-full text-sm">
                             <thead className="sticky top-0 bg-muted">
                               <tr>
@@ -650,6 +696,11 @@ const PatientDetailPage: React.FC = () => {
                                 <th className="p-2">Temp</th>
                                 <th className="p-2">MAP</th>
                                 <th className="p-2">RR</th>
+                                <th className="p-2">BP</th>
+                                <th className="p-2">EtCO₂</th>
+                                <th className="p-2">FiO₂</th>
+                                <th className="p-2">TV</th>
+                                <th className="p-2">CVP</th>
                               </tr>
                             </thead>
 
@@ -672,6 +723,7 @@ const PatientDetailPage: React.FC = () => {
                                     <td className="p-2">
                                       {new Date(v.recordedAt).toLocaleString()}
                                     </td>
+
                                     <td className="p-2 text-center">
                                       {v.heartRate}
                                     </td>
@@ -686,6 +738,28 @@ const PatientDetailPage: React.FC = () => {
                                     </td>
                                     <td className="p-2 text-center">
                                       {v.respiratoryRate}
+                                    </td>
+
+                                    <td className="p-2 text-center">
+                                      {v.bloodPressure || "--"}
+                                    </td>
+
+                                    <td className="p-2 text-center">
+                                      {v.endTidalCO2 ?? "--"}
+                                    </td>
+
+                                    <td className="p-2 text-center">
+                                      {v.fiO2
+                                        ? `${(v.fiO2 * 100).toFixed(0)}%`
+                                        : "--"}
+                                    </td>
+
+                                    <td className="p-2 text-center">
+                                      {v.tidalVolume ?? "--"}
+                                    </td>
+
+                                    <td className="p-2 text-center">
+                                      {v.centralVenousPressure ?? "--"}
                                     </td>
                                   </tr>
                                 );
