@@ -260,11 +260,18 @@ patientRoute.delete(
     try {
       const patient = await Patient.findById(id);
       if (!patient) return res.status(404).json({ msg: "Patient not found" });
+      const patientData = patient.toObject();
+      const { _id, __v, ...rest } = patientData;
+      await DisPatient.create({
+        ...patientData,
+        deletedAt: new Date(),
+      });
       await Patient.findByIdAndDelete(id);
 
-      await DisPatient.create(patient);
       res.status(200).json({ msg: "Patient deleted successfully" });
     } catch (e: any) {
+      console.log("error ", e.message)
+      console.log("stack ", e.stack)
       res.status(500).json({ msg: "Server error", error: e.message });
     }
   },

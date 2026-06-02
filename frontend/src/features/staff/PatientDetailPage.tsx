@@ -95,12 +95,16 @@ const PatientDetailPage: React.FC = () => {
   const dischargeMutation = useMutation({
     mutationFn: () => patientApi.dischargePatient(id!),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["patients"] });
+
       toast({
         title: "Patient Discharged",
         description: "Patient has been moved to discharged list",
       });
+
       localStorage.removeItem("last_patient_id");
       localStorage.removeItem("last_machine_key");
+
       navigate("/staff");
     },
     onError: (error: Error) => {
@@ -292,9 +296,8 @@ const PatientDetailPage: React.FC = () => {
               </p>
             </div>
           </div>
-
+          {/*
           <div className="flex items-center gap-3 flex-wrap">
-            {/* Connection Status */}
             <Badge
               variant="outline"
               className={cn(
@@ -341,9 +344,10 @@ const PatientDetailPage: React.FC = () => {
                 </>
               )}
             </Button>
+          
           </div>
+          */}
         </div>
-
         {/* Patient Info & Actions */}
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6 p-4 rounded-lg border bg-card">
           {/* Assigned Staff */}
