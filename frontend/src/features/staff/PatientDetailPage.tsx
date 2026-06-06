@@ -60,6 +60,7 @@ const PatientDetailPage: React.FC = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [liveVitals, setLiveVitals] = useState<Vitals | null>(null);
+  const [mlResult, setMlResult] = useState<any>(null);
   const [ecgSeries, setEcgSeries] = useState<VitalDataPoint[]>([]);
   const [vitalSeries, setVitalSeries] = useState<VitalDataPoint[]>([]);
   const [activeTab, setActiveTab] = useState("live");
@@ -164,8 +165,9 @@ const PatientDetailPage: React.FC = () => {
   }, [user, patient]);
 
   // Handle vital updates from WebSocket
-  const handleVitalUpdate = useCallback((vitals: Vitals) => {
+  const handleVitalUpdate = useCallback((vitals: Vitals, mlResult: any) => {
     setLiveVitals(vitals);
+    setMlResult(mlResult);
 
     if (!isPausedRef.current) {
       const newPoint: VitalDataPoint = {
@@ -203,9 +205,9 @@ const PatientDetailPage: React.FC = () => {
   useEffect(() => {
     if (!patient?.machineKey || !id) return;
 
-    const unsubVital = wsService.onVitalUpdate((pid, vitals) => {
+    const unsubVital = wsService.onVitalUpdate((pid, vitals, mlResult) => {
       if (pid !== id) return;
-      handleVitalUpdate(vitals);
+      handleVitalUpdate(vitals, mlResult);
     });
 
     const unsubConnection = wsService.onConnectionChange(setIsConnected);
@@ -509,6 +511,27 @@ const PatientDetailPage: React.FC = () => {
                 unit="mmHg"
                 icon={Gauge}
                 color="pressure"
+                isLive={isConnected && !isPaused}
+              />
+              <VitalCard
+                label="ML Risk Level"
+                value={mlResult?.risk_level ?? "--"}
+                unit=""
+                icon={AlertCircle}
+                color="pressure"
+                isLive={isConnected && !isPaused}
+              />
+
+              <VitalCard
+                label="Risk Probability"
+                value={
+                  mlResult?.high_risk_probability
+                    ? (mlResult.high_risk_probability * 100).toFixed(2)
+                    : "--"
+                }
+                unit="%"
+                icon={Activity}
+                color="heart"
                 isLive={isConnected && !isPaused}
               />
             </div>

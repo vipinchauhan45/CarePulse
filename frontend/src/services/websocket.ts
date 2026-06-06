@@ -2,7 +2,19 @@ import type { Vitals } from "@/types";
 
 const WS_URL = "ws://localhost:8060";
 
-type VitalUpdateCallback = (patientId: string, vitals: Vitals) => void;
+type MLResult = {
+  prediction: number;
+  risk_level: string;
+  high_risk_probability: number;
+  success: boolean;
+};
+
+type VitalUpdateCallback = (
+  patientId: string,
+  vitals: Vitals,
+  mlResult: MLResult | null
+) => void;
+
 type ConnectionCallback = (connected: boolean) => void;
 type ErrorCallback = (error: string) => void;
 
@@ -115,7 +127,7 @@ class WebSocketService {
         const data = JSON.parse(event.data);
 
         if (data.type === "vitalUpdate" && data.vitals && data.patientId) {
-          this.notifyVitalUpdate(data.patientId, data.vitals);
+          this.notifyVitalUpdate(data.patientId, data.vitals, data.mlResult ?? null);
           return;
         }
 
@@ -245,9 +257,15 @@ class WebSocketService {
     };
   }
 
-  private notifyVitalUpdate(patientId: string, vitals: Vitals) {
-    this.vitalUpdateCallbacks.forEach((cb) => cb(patientId, vitals));
-  }
+  private notifyVitalUpdate(
+  patientId: string,
+  vitals: Vitals,
+  mlResult: MLResult | null
+) {
+  this.vitalUpdateCallbacks.forEach((cb) =>
+    cb(patientId, vitals, mlResult)
+  );
+}
 
   private notifyConnectionChange(c: boolean) {
     this.connectionCallbacks.forEach((cb) => cb(c));

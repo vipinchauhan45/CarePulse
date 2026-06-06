@@ -400,7 +400,7 @@ export class RoomManager {
         "High Risk Probability:",
         `${(result.high_risk_probability * 100).toFixed(2)}%`,
       );
-      
+
       return result;
     } catch (error) {
       console.error("[ML ERROR]", error);
@@ -427,26 +427,32 @@ export class RoomManager {
     const watchers = room?.staffSockets.size ?? 0;
     console.log("[VITALS] watchers in room:", watchers);
 
+    const mlResult = await this.sendToMLModel(patientId, vitals);
+
     if (room) {
       for (const s of room.staffSockets) {
         if (s.readyState === WebSocket.OPEN) {
-          s.send(JSON.stringify({ type: "vitalUpdate", patientId, vitals }));
+          s.send(
+            JSON.stringify({
+              type: "vitalUpdate",
+              patientId,
+              vitals,
+              mlResult,
+            }),
+          );
         }
       }
     }
 
-    if (!this.vitalsBuffer.has(patientId)) this.vitalsBuffer.set(patientId, []);
+    if (!this.vitalsBuffer.has(patientId)) {
+      this.vitalsBuffer.set(patientId, []);
+    }
+
     this.vitalsBuffer.get(patientId)!.push(vitals);
 
-    this.sendToMLModel(patientId, vitals)
-      .then(async (mlResult) => {
-        if (mlResult) {
-          await this.handleMLRiskEmailing(patientId, vitals, mlResult);
-        }
-      })
-      .catch((err) => {
-        console.error("[ML ERROR]", err);
-      });
+    if (mlResult) {
+      await this.handleMLRiskEmailing(patientId, vitals, mlResult);
+    }
 
     this.handleAlerting(patientId, vitals).catch((err) => {
       console.error("[ALERT ERROR]", err);
@@ -561,37 +567,47 @@ Please check the patient dashboard immediately.
   }
 
   private async handleAlerting(patientId: string, vitals: VitalData) {
-    const severity = getSeverity(vitals);
-    const prev = this.patientState.get(patientId) ?? "normal";
-    const next = severity ? "abnormal" : "normal";
+  const severity = getSeverity(vitals);
+  const next = severity ? "abnormal" : "normal";
 
-    console.log(
-      "[ALERT] patient:",
-      patientId,
-      "prev:",
-      prev,
-      "next:",
-      next,
-      "severity:",
-      severity,
-    );
+  const activeAlert = await AlertModel.findOne({
+    patientId,
+    isActive: true,
+  });
 
-    if (severity && prev === "normal") {
-      this.patientState.set(patientId, "abnormal");
+  const prev: "normal" | "abnormal" = activeAlert ? "abnormal" : "normal";
 
-      const alertTypes = getAlertTypes(vitals);
-      console.log("[ALERT] triggered types:", alertTypes);
+  console.log(
+    "[ALERT] patient:",
+    patientId,
+    "prev:",
+    prev,
+    "next:",
+    next,
+    "severity:",
+    severity,
+  );
 
-      await this.sendAlertToAssigned(patientId, vitals, severity, alertTypes);
-      return;
-    }
+  if (severity && prev === "normal") {
+    this.patientState.set(patientId, "abnormal");
 
-    if (!severity && prev === "abnormal") {
-      this.patientState.set(patientId, "normal");
-      console.log("[ALERT] recovery triggered");
-      await this.sendRecoveryToAssigned(patientId);
-    }
+    const alertTypes = getAlertTypes(vitals);
+
+    await this.sendAlertToAssigned(patientId, vitals, severity, alertTypes);
+    return;
   }
+
+  if (!severity && prev === "abnormal") {
+    this.patientState.set(patientId, "normal");
+
+    console.log("[ALERT] recovery triggered");
+
+    await this.sendRecoveryToAssigned(patientId);
+    return;
+  }
+
+  this.patientState.set(patientId, next);
+}
 
   public async sendAlertToAssigned(
     patientId: string,
